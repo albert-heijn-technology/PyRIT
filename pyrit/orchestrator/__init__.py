@@ -5,7 +5,6 @@ from pyrit.orchestrator.models.orchestrator_result import OrchestratorResult, Or
 from pyrit.orchestrator.multi_turn.multi_turn_orchestrator import MultiTurnOrchestrator
 from pyrit.orchestrator.multi_turn.tree_of_attacks_with_pruning_orchestrator import TreeOfAttacksWithPruningOrchestrator
 from pyrit.orchestrator.scoring_orchestrator import ScoringOrchestrator
-from pyrit.orchestrator.single_turn.prompt_orchestrator import PromptOrchestrator
 from pyrit.orchestrator.single_turn.prompt_sending_orchestrator import PromptSendingOrchestrator
 from pyrit.orchestrator.single_turn.question_answer_benchmark_orchestrator import QuestionAnsweringBenchmarkOrchestrator
 from pyrit.orchestrator.single_turn.role_play_orchestrator import RolePlayOrchestrator, RolePlayPaths
@@ -18,7 +17,6 @@ from pyrit.orchestrator.fuzzer_orchestrator import FuzzerOrchestrator
 from pyrit.orchestrator.multi_turn.crescendo_orchestrator import CrescendoOrchestrator
 from pyrit.orchestrator.multi_turn.pair_orchestrator import PAIROrchestrator
 from pyrit.orchestrator.multi_turn.red_teaming_orchestrator import RedTeamingOrchestrator
-from pyrit.orchestrator.multi_turn.simulator_orchestrator import SimulatorOrchestrator
 
 
 from pyrit.orchestrator.single_turn.flip_attack_orchestrator import FlipAttackOrchestrator
@@ -43,8 +41,6 @@ __all__ = [
     "PAIROrchestrator",
     "PromptSendingOrchestrator",
     "QuestionAnsweringBenchmarkOrchestrator",
-    "PromptOrchestrator",
-    "SimulatorOrchestrator",
     "RedTeamingOrchestrator",
     "RolePlayOrchestrator",
     "RolePlayPaths",

@@ -7,7 +7,7 @@ import enum
 import logging
 import warnings
 from pathlib import Path
-from typing import Optional, cast
+from typing import Optional, cast, Callable
 
 from typing_extensions import LiteralString, deprecated
 
@@ -32,14 +32,12 @@ from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
-
 class RTOSystemPromptPaths(enum.Enum):
     TEXT_GENERATION = Path(RED_TEAM_ORCHESTRATOR_PATH, "text_generation.yaml").resolve()
     IMAGE_GENERATION = Path(RED_TEAM_ORCHESTRATOR_PATH, "image_generation.yaml").resolve()
     NAIVE_CRESCENDO = Path(RED_TEAM_ORCHESTRATOR_PATH, "naive_crescendo.yaml").resolve()
     VIOLENT_DURIAN = Path(RED_TEAM_ORCHESTRATOR_PATH, "violent_durian.yaml").resolve()
     CRUCIBLE = Path(RED_TEAM_ORCHESTRATOR_PATH, "crucible.yaml").resolve()
-
 
 @deprecated(
     cast(
@@ -55,7 +53,7 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
     """
     .. warning::
         `RedTeamingOrchestrator` is deprecated and will be removed in **v0.12.0**;
-        use `pyrit.attacks.RedTeamingAttack` instead.
+        use `pyrit.attacks.Simulation` instead.
 
     The `RedTeamingOrchestrator` class orchestrates a multi-turn red teaming attack on a target system.
 
@@ -84,25 +82,19 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
         *,
         objective_target: PromptTarget,
         adversarial_chat: PromptChatTarget,
-        adversarial_chat_system_prompt_path: Path = RTOSystemPromptPaths.TEXT_GENERATION.value,
+        adversarial_chat_system_prompt_path: Path = None,
         adversarial_chat_seed_prompt: str = "How can I help you?",
         prompt_converters: Optional[list[PromptConverter]] = None,
         max_turns: int = 5,
         objective_scorer: Scorer,
         use_score_as_feedback: bool = True,
         batch_size: int = 1,
+        evaluate_chat: bool = False,
+        score_threshold: float = 0.9,
+        thread_id_injector: Optional[Callable[[str, str], str]] = None,
+        max_retries: int = 3,
         verbose: bool = False,
     ) -> None:
-
-        warnings.warn(
-            deprecation_message(
-                old_item="RedTeamingOrchestrator",
-                new_item=RedTeamingAttack,
-                removed_in="v0.12.0",
-            ),
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
         if objective_scorer.scorer_type != "true_false":
             raise ValueError(
@@ -135,18 +127,23 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
             attack_scoring_config=AttackScoringConfig(
                 objective_scorer=objective_scorer,
                 use_score_as_feedback=use_score_as_feedback,
+                successful_objective_threshold=score_threshold,
             ),
             attack_converter_config=AttackConverterConfig(
                 request_converters=PromptConverterConfiguration.from_converters(converters=prompt_converters or []),
             ),
             prompt_normalizer=self._prompt_normalizer,
             max_turns=max_turns,
+            thread_id_injector=thread_id_injector,
+            max_retries=max_retries,
+            scorer_type=objective_scorer.scorer_type,
+            evaluate_chat=evaluate_chat,
         )
 
     async def run_attack_async(
-        self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
+            self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
     ) -> OrchestratorResult:
-
+        print("Running attack asynchronously...")
         # Transitions to the new attack model
         context = MultiTurnAttackContext(
             objective=objective,
@@ -164,3 +161,4 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
             objective_score=result.last_score,
             confidence=1.0 if objective_achieved else 0.0,
         )
+
