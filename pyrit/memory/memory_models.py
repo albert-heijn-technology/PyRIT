@@ -197,6 +197,7 @@ class ScoreEntry(Base):  # type: ignore
     score_metadata = mapped_column(String, nullable=True)
     scorer_class_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_request_response_id = mapped_column(Uuid(as_uuid=True), ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    expected_output = mapped_column(String, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
     task = mapped_column(String, nullable=True)
     prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
@@ -211,6 +212,7 @@ class ScoreEntry(Base):  # type: ignore
         self.score_metadata = entry.score_metadata
         self.scorer_class_identifier = entry.scorer_class_identifier
         self.prompt_request_response_id = entry.prompt_request_response_id if entry.prompt_request_response_id else None
+        self.expected_output = entry.expected_output
         self.timestamp = entry.timestamp
         self.task = entry.task
 
@@ -225,6 +227,7 @@ class ScoreEntry(Base):  # type: ignore
             score_metadata=self.score_metadata,
             scorer_class_identifier=self.scorer_class_identifier,
             prompt_request_response_id=self.prompt_request_response_id,
+            expected_output=self.expected_output,
             timestamp=self.timestamp,
             task=self.task,
         )
@@ -240,6 +243,7 @@ class ScoreEntry(Base):  # type: ignore
             "score_metadata": self.score_metadata,
             "scorer_class_identifier": self.scorer_class_identifier,
             "prompt_request_response_id": str(self.prompt_request_response_id),
+            "expected_output": self.expected_output,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "task": self.task,
         }

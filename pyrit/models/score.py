@@ -41,6 +41,8 @@ class Score:
     # the ID associated with what we're scoring.
     prompt_request_response_id: uuid.UUID | str
 
+    expected_output: Optional[str]
+
     # Timestamp of when the score was created
     timestamp: datetime
 
@@ -61,6 +63,7 @@ class Score:
         scorer_class_identifier: Optional[Dict[str, str]] = None,
         timestamp: Optional[datetime] = None,
         task: Optional[str] = None,
+        expected_output: Optional[str] = None,
     ):
         self.id = id if id else uuid.uuid4()
         self.timestamp = timestamp if timestamp else datetime.now()
@@ -79,6 +82,7 @@ class Score:
         self.score_metadata = score_metadata
         self.scorer_class_identifier = scorer_class_identifier or {}
         self.prompt_request_response_id = prompt_request_response_id
+        self.expected_output = expected_output
         self.task = task
 
     def get_value(self):
@@ -125,6 +129,7 @@ class Score:
             "score_metadata": self.score_metadata,
             "scorer_class_identifier": self.scorer_class_identifier,
             "prompt_request_response_id": str(self.prompt_request_response_id),
+            "expected_output": self.expected_output,
             "timestamp": self.timestamp.isoformat(),
             "task": self.task,
         }
@@ -156,9 +161,10 @@ class UnvalidatedScore:
     prompt_request_response_id: uuid.UUID | str
     task: str
     id: Optional[uuid.UUID | str] = None
+    expected_output: Optional[str] = None
     timestamp: Optional[datetime] = None
 
-    def to_score(self, *, score_value: str):
+    def to_score(self, *, score_value: str, expected_output: Optional[str] = None) -> Score:
         return Score(
             id=self.id,
             score_value=score_value,
@@ -169,6 +175,7 @@ class UnvalidatedScore:
             score_metadata=self.score_metadata,
             scorer_class_identifier=self.scorer_class_identifier,
             prompt_request_response_id=self.prompt_request_response_id,
+            expected_output=expected_output,
             timestamp=self.timestamp,
             task=self.task,
         )

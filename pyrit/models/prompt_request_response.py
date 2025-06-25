@@ -56,7 +56,8 @@ class PromptRequestResponse:
                 raise ValueError("Conversation ID mismatch.")
 
             if not request_piece.converted_value:
-                raise ValueError("Converted prompt text is None.")
+                request_piece.converted_value = request_piece.original_value
+                #raise ValueError("Converted prompt text is None.")
 
             if not role:
                 role = request_piece.role
@@ -84,7 +85,7 @@ class PromptRequestResponse:
 
     @staticmethod
     def flatten_to_prompt_request_pieces(
-        request_responses: Sequence["PromptRequestResponse"],
+            request_responses: Sequence["PromptRequestResponse"],
     ) -> MutableSequence[PromptRequestPiece]:
         if not request_responses:
             return []
@@ -106,7 +107,7 @@ class PromptRequestResponse:
 
 
 def group_conversation_request_pieces_by_sequence(
-    request_pieces: Sequence[PromptRequestPiece],
+        request_pieces: Sequence[PromptRequestPiece],
 ) -> MutableSequence[PromptRequestResponse]:
     """
     Groups prompt request pieces from the same conversation into PromptRequestResponses.

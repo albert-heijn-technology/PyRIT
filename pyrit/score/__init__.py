@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-
+from pyrit.score.evaluator import Evaluator
 from pyrit.score.scorer import Scorer
 
 from pyrit.score.azure_content_filter_scorer import AzureContentFilterScorer
@@ -44,6 +44,7 @@ __all__ = [
     "PromptShieldScorer",
     "QuestionAnswerScorer",
     "Scorer",
+    "Evaluator",
     "ScoreAggregator",
     "SelfAskCategoryScorer",
     "SelfAskLikertScorer",

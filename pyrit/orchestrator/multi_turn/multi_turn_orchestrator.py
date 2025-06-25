@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Optional, Sequence, Union
 
 from pyrit.models import PromptRequestPiece, PromptRequestResponse, Score, SeedPrompt
-from pyrit.orchestrator import Orchestrator, OrchestratorResult
+from pyrit.orchestrator.orchestrator_class import Orchestrator
+from pyrit.orchestrator.models.orchestrator_result import OrchestratorResult
 from pyrit.prompt_converter import PromptConverter
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptChatTarget, PromptTarget
@@ -58,6 +59,7 @@ class MultiTurnOrchestrator(Orchestrator):
         objective_scorer: Scorer,
         batch_size: int = 1,
         verbose: bool = False,
+        evaluate_chat: bool = False,
     ) -> None:
 
         super().__init__(prompt_converters=prompt_converters, verbose=verbose)
@@ -86,6 +88,7 @@ class MultiTurnOrchestrator(Orchestrator):
         self._prepended_conversation: list[PromptRequestResponse] = []
         self._last_prepended_user_message: str = ""
         self._last_prepended_assistant_message_scores: Sequence[Score] = []
+        self._evaluate_chat = evaluate_chat
 
     def _get_adversarial_chat_seed_prompt(self, seed_prompt):
         if isinstance(seed_prompt, str):
@@ -95,9 +98,8 @@ class MultiTurnOrchestrator(Orchestrator):
             )
         return seed_prompt
 
-    @abstractmethod
     async def run_attack_async(
-        self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
+            self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
     ) -> OrchestratorResult:
         """
         Applies the attack strategy until the conversation is complete or the maximum number of turns is reached.
@@ -119,7 +121,7 @@ class MultiTurnOrchestrator(Orchestrator):
         """
 
     async def run_attacks_async(
-        self, *, objectives: list[str], memory_labels: Optional[dict[str, str]] = None
+            self, *, objectives: list[str], memory_labels: Optional[dict[str, str]] = None
     ) -> list[OrchestratorResult]:
         """Applies the attack strategy for each objective in the list of objectives.
 
@@ -177,8 +179,8 @@ class MultiTurnOrchestrator(Orchestrator):
 
             # Check assumption that there will be a user message preceding the assistant message
             if (
-                len(self._prepended_conversation) > 1
-                and self._prepended_conversation[-2].request_pieces[0].role == "user"
+                    len(self._prepended_conversation) > 1
+                    and self._prepended_conversation[-2].request_pieces[0].role == "user"
             ):
                 self._last_prepended_user_message = self._prepended_conversation[-2].get_value()
             else:

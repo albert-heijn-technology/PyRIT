@@ -1,0 +1,39 @@
+################################################################################
+# 1. Environment / Endpoint Settings
+################################################################################
+
+# The target endoint and auth token are expected to be set in your `.env` file:
+
+# Paths to dataset and evaluator YAML files
+dataset_path: "<PATH_TO_YOUR_DATASET_YAML>"
+evaluator_path: "<PATH_TO_YOUR_EVALUATOR_YAML>"
+
+# Raw HTTP request template.
+# Replace {base_url} and {token} placeholders in your code before sending.
+# Double braces {{ }} are used to escape literal braces in YAML strings.
+http_request_raw: |
+  POST {base_url} HTTP/1.1
+  Content-Type: application/json
+  X-Authorization: {token}
+  Accept: <ACCEPT_HEADER_VALUE>
+  <CUSTOM_HEADER_1>: <CUSTOM_HEADER_VALUE_1>
+  <CUSTOM_HEADER_2>: <CUSTOM_HEADER_VALUE_2>
+
+  {{
+      "data": "{{PROMPT}}"
+  }}
+
+# List of fields for MultiFieldResponseParser with generic patterns.
+field_defs:
+  - name: "Stream field name"
+    type: "stream"
+    pattern: "<PATTERN>"
+  - name: "JSON field name"
+    type: "json"
+    pattern: "<PATTERN>"
+  - name: "Regex field name"
+    type: "regex"
+    pattern: "<PATTERN>"
+
+# Regex pattern for extracting thread ID from response content.
+thread_id_pattern: "<PATTERN>"

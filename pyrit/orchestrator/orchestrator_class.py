@@ -25,10 +25,10 @@ class Orchestrator(abc.ABC, Identifier):
     _memory: MemoryInterface
 
     def __init__(
-        self,
-        *,
-        prompt_converters: Optional[list[PromptConverter]] = None,
-        verbose: bool = False,
+            self,
+            *,
+            prompt_converters: Optional[list[PromptConverter]] = None,
+            verbose: bool = False,
     ):
         self._prompt_converters = prompt_converters if prompt_converters else []
         self._memory = CentralMemory.get_memory_instance()
@@ -53,6 +53,7 @@ class Orchestrator(abc.ABC, Identifier):
     def _create_normalizer_request(
         self,
         prompt_text: str,
+        expected_output: str = None,
         prompt_type: PromptDataType = "text",
         conversation_id: Optional[str] = None,
         converters: Optional[List[PromptConverter]] = None,
@@ -66,6 +67,7 @@ class Orchestrator(abc.ABC, Identifier):
             prompts=[
                 SeedPrompt(
                     value=prompt_text,
+                    expected_output=expected_output,
                     data_type=prompt_type,
                     metadata=metadata,
                 )

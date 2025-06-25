@@ -92,35 +92,39 @@ class PromptNormalizer(abc.ABC):
 
         response = None
 
-        try:
-            response = await target.send_prompt_async(prompt_request=request)
-            self._memory.add_request_response_to_memory(request=request)
-        except EmptyResponseException:
-            # Empty responses are retried, but we don't want them to stop execution
-            self._memory.add_request_response_to_memory(request=request)
+        max_retries = 1
+        retry_delay = 15  # seconds
+        for attempt in range(max_retries + 1):
+            try:
+                response = await target.send_prompt_async(prompt_request=request)
+                self._memory.add_request_response_to_memory(request=request)
+                break  # Exit the loop if the operation is successful
+            except EmptyResponseException:
+                # Empty responses are retried, but we don't want them to stop execution
+                self._memory.add_request_response_to_memory(request=request)
 
-            response = construct_response_from_request(
-                request=request.request_pieces[0],
-                response_text_pieces=[""],
-                response_type="text",
-                error="empty",
-            )
+                response = construct_response_from_request(
+                    request=request.request_pieces[0],
+                    response_text_pieces=["Empty response from target."],
+                    error="empty",
+                )
+                break  # Exit the loop if the operation is successful
+            except Exception as ex:
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)  # Wait before retrying
+                    print("Retrying Prompt:" + str(request.request_pieces[0].original_value))
+                else:
+                    self._memory.add_request_response_to_memory(request=request)
 
-        except Exception as ex:
-            # Ensure request to memory before processing exception
-            self._memory.add_request_response_to_memory(request=request)
+                    # Construct an error response with request
+                    error_response = construct_response_from_request(
+                        request=request.request_pieces[0],
+                        response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()[:200]}"]
+                    )
 
-            error_response = construct_response_from_request(
-                request=request.request_pieces[0],
-                response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()}"],
-                response_type="error",
-                error="processing",
-            )
-
-            await self._calc_hash(request=error_response)
-            self._memory.add_request_response_to_memory(request=error_response)
-            cid = request.request_pieces[0].conversation_id if request and request.request_pieces else None
-            raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
+                    await self._calc_hash(request=error_response)
+                    self._memory.add_request_response_to_memory(request=error_response)
+                    return error_response
 
         if response is None:
             return None
@@ -138,7 +142,7 @@ class PromptNormalizer(abc.ABC):
         target: PromptTarget,
         labels: Optional[dict[str, str]] = None,
         orchestrator_identifier: Optional[dict[str, str]] = None,
-        batch_size: int = 10,
+        batch_size: int = 1,
     ) -> list[PromptRequestResponse]:
         """
         Sends a batch of prompts to the target asynchronously.

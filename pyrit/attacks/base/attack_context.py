@@ -136,6 +136,9 @@ class SingleTurnAttackContext(AttackContext):
     # Arbitrary metadata that downstream orchestrators or scorers may attach
     metadata: Optional[dict[str, Union[str, int]]] = None
 
+    # Expected output for the attack, if any
+    expected_output: Optional[str] = None
+
     @classmethod
     def create_from_params(
         cls,
@@ -156,10 +159,20 @@ class SingleTurnAttackContext(AttackContext):
         if system_prompt is not None and not isinstance(system_prompt, str):
             raise ValueError(f"system_prompt must be a string, got {type(system_prompt).__name__}")
 
+        conversation_id = kwargs.get("conversation_id")
+        if conversation_id is not None and not isinstance(conversation_id, str):
+            raise ValueError(f"conversation_id must be a string, got {type(conversation_id).__name__}")
+
+        expected_output = kwargs.get("expected_output")
+        if expected_output is not None and not isinstance(expected_output, str):
+            raise ValueError(f"expected_output must be a string, got {type(expected_output).__name__}")
+
         return cls(
             objective=objective,
             prepended_conversation=prepended_conversation,
             memory_labels=memory_labels,
             seed_prompt_group=seed_prompt_group,
             system_prompt=system_prompt,
+            conversation_id=conversation_id,
+            expected_output=expected_output,
         )

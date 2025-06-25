@@ -29,6 +29,7 @@ class PromptRequestPiece(abc.ABC):
         *,
         role: ChatMessageRole,
         original_value: str,
+        expected_output: Optional[str] = None,
         original_value_sha256: Optional[str] = None,
         converted_value: Optional[str] = None,
         converted_value_sha256: Optional[str] = None,
@@ -104,6 +105,7 @@ class PromptRequestPiece(abc.ABC):
         self.scorer_identifier = scorer_identifier or {}
 
         self.original_value = original_value
+        self.expected_output = expected_output
 
         if original_value_data_type not in get_args(PromptDataType):
             raise ValueError(f"original_value_data_type {original_value_data_type} is not a valid data type.")
@@ -191,6 +193,7 @@ class PromptRequestPiece(abc.ABC):
             "scorer_identifier": self.scorer_identifier,
             "original_value_data_type": self.original_value_data_type,
             "original_value": self.original_value,
+            "expected_output": self.expected_output,
             "original_value_sha256": self.original_value_sha256,
             "converted_value_data_type": self.converted_value_data_type,
             "converted_value": self.converted_value,
@@ -211,6 +214,7 @@ class PromptRequestPiece(abc.ABC):
             self.id == other.id
             and self.role == other.role
             and self.original_value == other.original_value
+            and self.expected_output == other.expected_output
             and self.original_value_data_type == other.original_value_data_type
             and self.original_value_sha256 == other.original_value_sha256
             and self.converted_value == other.converted_value

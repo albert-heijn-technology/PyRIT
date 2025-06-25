@@ -84,16 +84,17 @@ class Scorer(abc.ABC):
         request_piece = PromptRequestPiece(
             role="user",
             original_value=text,
+            expected_output=text,
         )
 
         request_piece.id = None
         return await self.score_async(request_piece, task=task)
 
     async def score_responses_inferring_tasks_batch_async(
-        self,
-        *,
-        request_responses: Sequence[PromptRequestPiece],
-        batch_size: int = 10,
+            self,
+            *,
+            request_responses: Sequence[PromptRequestPiece],
+            batch_size: int = 10,
     ) -> list[Score]:
         """
         Scores a batch of responses (ignores non-assistant messages).
@@ -231,6 +232,9 @@ class Scorer(abc.ABC):
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
         orchestrator_identifier: Optional[Dict[str, str]] = None,
+        expected_output: str = None,
+        request_prompt: Optional[str] = None,
+        additional_evaluator_variables: dict[str, str] = None,
     ) -> UnvalidatedScore:
         """
         Sends a request to a target, and takes care of retries.
@@ -260,10 +264,24 @@ class Scorer(abc.ABC):
                 score_value still needs to be normalized and validated.
         """
 
+
         conversation_id = str(uuid.uuid4())
 
         if orchestrator_identifier:
             orchestrator_identifier["scored_prompt_id"] = str(scored_prompt_id)
+
+        # This is the user prompt sent to the target and mainly used for checking relevance
+        if request_prompt is not None:
+            system_prompt = system_prompt.replace("{{ request_prompt }}", request_prompt)
+
+        # This is the expected output that the target should generate
+        if expected_output is not None:
+            system_prompt = system_prompt.replace("{{ expected_output }}", expected_output)
+
+        # This is the additional evaluation variables that can be used in the system prompt of the scorer
+        for key, value in (additional_evaluator_variables or {}).items():
+            placeholder = f"{{{{ {key} }}}}"
+            system_prompt = system_prompt.replace(placeholder, value)
 
         prompt_target.set_system_prompt(
             system_prompt=system_prompt,
@@ -276,6 +294,7 @@ class Scorer(abc.ABC):
                 PromptRequestPiece(
                     role="user",
                     original_value=prompt_request_value,
+                    expected_output=expected_output,
                     original_value_data_type=prompt_request_data_type,
                     converted_value_data_type=prompt_request_data_type,
                     conversation_id=conversation_id,
@@ -310,6 +329,7 @@ class Scorer(abc.ABC):
                 scorer_class_identifier=self.get_identifier(),
                 score_metadata=parsed_response.get(metadata_output_key),
                 prompt_request_response_id=scored_prompt_id,
+                expected_output=expected_output,
                 task=task,
             )
 

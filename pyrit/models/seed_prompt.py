@@ -70,6 +70,7 @@ class SeedPrompt(YamlLoadable):
     prompt_group_id: Optional[uuid.UUID] = None
     prompt_group_alias: Optional[str] = None
     sequence: Optional[int] = 0
+    expected_output: Optional[str] = None
 
     TEMPLATE_PATHS = {
         "datasets_path": DATASETS_PATH,
@@ -200,7 +201,7 @@ class SeedPrompt(YamlLoadable):
 
     @classmethod
     def from_yaml_with_required_parameters(
-        cls, template_path: Union[str, Path], required_parameters: list[str], error_message: Optional[str] = None
+            cls, template_path: Union[str, Path], required_parameters: list[str], error_message: Optional[str] = None
     ) -> "SeedPrompt":
         """
         Load a SeedPrompt from a YAML file and validate that it contains specific parameters.
@@ -237,9 +238,9 @@ class SeedPromptGroup(YamlLoadable):
     prompts: Sequence[SeedPrompt]
 
     def __init__(
-        self,
-        *,
-        prompts: Union[Sequence[SeedPrompt], Sequence[Dict[str, Any]]],
+            self,
+            *,
+            prompts: Union[Sequence[SeedPrompt], Sequence[Dict[str, Any]]],
     ):
         if not prompts:
             raise ValueError("SeedPromptGroup cannot be empty.")

@@ -1,0 +1,84 @@
+################################################################################
+# 1. Environment / Endpoint Settings
+################################################################################
+
+# The target endoint and auth token are expected to be set in your `.env` file:
+
+################################################################################
+# 2. HTTP Request Template (raw string, with {{PROMPT}} placeholder)
+################################################################################
+
+http_request_raw: |
+  POST {base_url} HTTP/1.1
+  Content-Type: application/json
+  X-Authorization: {token}
+  Accept: <ACCEPT_HEADER_VALUE>
+  <CUSTOM_HEADER_1>: <CUSTOM_HEADER_VALUE_1>
+  <CUSTOM_HEADER_2>: <CUSTOM_HEADER_VALUE_2>
+
+  {{
+      "data": "{{PROMPT}}"
+  }}
+
+################################################################################
+# 3. Parser Definitions (for MultiFieldResponseParser)
+#    - name: field name to appear in the parsed dict
+#    - type: "stream" (for repeated matches) or "regex" (first match)
+#    - pattern: generic placeholder regex pattern (double-escaped for YAML)
+################################################################################
+
+# List of fields for MultiFieldResponseParser with generic patterns.
+field_defs:
+  - name: "Stream field name"
+    type: "stream"
+    pattern: "<PATTERN>"
+  - name: "JSON field name"
+    type: "json"
+    pattern: "<PATTERN>"
+  - name: "Regex field name"
+    type: "regex"
+    pattern: "<PATTERN>"
+
+################################################################################
+# 4. Thread-ID Extraction Regex
+#    Used by thread_id_parser to extract thread ID from response
+################################################################################
+
+thread_id_pattern: "<PATTERN>"
+
+################################################################################
+# 5. Simulation-Specific Settings
+################################################################################
+
+# 5.1 Path to the system prompt YAML seeding user simulation
+strategy_path: "<PATH_TO_SYSTEM_PROMPT_YAML>"
+
+# 5.2 Path to the evaluator YAML defining scoring logic
+scorer_path: "<PATH_TO_SCORER_YAML>"
+
+# 5.3 List of simulation objectives (each is a string describing a test goal)
+objectives:
+  - "<OBJECTIVE_DESCRIPTION_1>"
+  - "<OBJECTIVE_DESCRIPTION_2>"
+
+################################################################################
+# 6. Orchestrator Tuning Parameters
+################################################################################
+
+# Maximum number of turns the SimulatorOrchestrator should run per objective
+max_turns: <MAX_TURNS_INT>
+
+# Timeout seconds passed to HTTPTargetX (httpx timeout)
+timeout_seconds: <TIMEOUT_FLOAT>
+
+# If true, feed each step’s score back as feedback into the adversarial chat
+use_score_as_feedback: <true_or_false>
+
+# Scorer type; must match the scorer's output ("float_scale" or "true_false")
+scorer_type: "<SCORER_TYPE>"
+
+################################################################################
+# 7. Where to save the final HTML report
+################################################################################
+
+report_path: "<PATH_TO_SAVE_REPORTS>"

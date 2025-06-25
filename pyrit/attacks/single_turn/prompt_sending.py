@@ -54,6 +54,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
         max_attempts_on_failure: int = 0,
+        orchestrator_identifier = None,
     ) -> None:
         """
         Initialize the prompt injection attack strategy.
@@ -87,8 +88,8 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
-        if self._objective_scorer and self._objective_scorer.scorer_type != "true_false":
-            raise ValueError("Objective scorer must be a true/false scorer")
+        if self._objective_scorer and self._objective_scorer.scorer_type != "true_false" and self._objective_scorer.scorer_type != "float_scale":
+            raise ValueError(f"Objective scorer must be a true/false or float scale scorer. Got: {self._objective_scorer.scorer_type}")
 
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -102,6 +103,8 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
         self._max_attempts_on_failure = max_attempts_on_failure
+
+        self._orchestrator_identifier = orchestrator_identifier
 
     def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
         """
@@ -127,7 +130,11 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
         # Ensure the context has a conversation ID
-        context.conversation_id = str(uuid.uuid4())
+        if not context.conversation_id:
+            self._logger.debug("No conversation ID provided, generating a new one")
+            # Generate a new conversation ID if not provided
+            # This is useful for single-turn attacks where we don't have an existing conversation
+            context.conversation_id = str(uuid.uuid4())
 
         # Combine memory labels from context and attack strategy
         context.memory_labels = combine_dict(self._memory_labels, context.memory_labels)
@@ -153,10 +160,6 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         self._logger.info(f"Starting prompt injection attack with objective: {context.objective}")
         self._logger.info(f"Max attempts: {self._max_attempts_on_failure}")
 
-        # Execute with retries
-        response = None
-        score = None
-
         # Attack execution steps:
         # 1) Construct the seed prompt(s) that will be injected into the conversation
         # 2) Send the prompt to the target model using the prompt normalizer helper
@@ -169,26 +172,17 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         # Prepare the prompt
         prompt_group = self._get_prompt_group(context)
 
-        # Execute with retries
-        for attempt in range(self._max_attempts_on_failure + 1):
-            self._logger.debug(f"Attempt {attempt+1}/{self._max_attempts_on_failure + 1}")
+        # Send the prompt
+        response = await self._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=context)
 
-            # Send the prompt
-            response = await self._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=context)
-            if not response:
-                self._logger.warning(f"No response received on attempt {attempt+1} (likely filtered)")
-                continue  # Retry if no response (filtered or error)
+        # Add expected output to the response piece if provided
+        if context.expected_output is not None:
+            piece = response.request_pieces[0]
+            piece.expected_output = context.expected_output
+            response.request_pieces = [piece]
 
-            # If no objective scorer, we have a response but can't determine success
-            if not self._objective_scorer:
-                break
-
-            # Score the response
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
-
-            # On success, return immediately
-            if bool(score and score.get_value()):
-                break
+        # Score the response
+        score = await self._evaluate_response_async(response=response, objective=context.objective)
 
         # Determine the outcome
         outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
@@ -207,7 +201,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         return result
 
     def _determine_attack_outcome(
-        self, *, response: Optional[PromptRequestResponse], score: Optional[Score], context: SingleTurnAttackContext
+            self, *, response: Optional[PromptRequestResponse], score: Optional[Score], context: SingleTurnAttackContext
     ) -> tuple[AttackOutcome, Optional[str]]:
         """
         Determine the outcome of the attack based on the response and score.
@@ -224,9 +218,18 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score.score_type == "true_false" and score.get_value() is not None:
+            # If the score is a true/false type and has a value, we can determine success
+            if score.get_value():
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            else:
+                return AttackOutcome.FAILURE, "Objective not achieved according to scorer"
+        elif score.score_type == "float_scale" and score.get_value() is not None:
+            # If the score is a float scale type and has a value, we can determine success
+            if score.get_value() >= 0.5: # Todo: Use a configurable threshold
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            else:
+                return AttackOutcome.FAILURE, "Objective not achieved according to scorer"
 
         if response:
             # We got response(s) but none achieved the objective
@@ -263,7 +266,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         return SeedPromptGroup(prompts=[SeedPrompt(value=context.objective, data_type="text")])
 
     async def _send_prompt_to_objective_target_async(
-        self, *, prompt_group: SeedPromptGroup, context: SingleTurnAttackContext
+            self, *, prompt_group: SeedPromptGroup, context: SingleTurnAttackContext
     ) -> Optional[PromptRequestResponse]:
         """
         Send the prompt to the target and return the response.
@@ -284,7 +287,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=context.memory_labels,  # combined with strategy labels at _setup()
-            orchestrator_identifier=self.get_identifier(),
+            orchestrator_identifier=self._orchestrator_identifier,
         )
 
     async def _evaluate_response_async(self, *, response: PromptRequestResponse, objective: str) -> Optional[Score]:
