@@ -559,9 +559,8 @@ class RedTeamingAttack(AttackStrategy[MultiTurnAttackContext, AttackResult]):
         if response_piece.is_blocked():
             return None
 
-
         if self._evaluate_chat:
-            prompt_request_responses = self._memory.get_conversation(conversation_id=conversation_id)
+            prompt_request_responses = self._memory.get_conversation(conversation_id=response_piece.conversation_id)
             if not prompt_request_responses:
                 return None
 
