@@ -132,7 +132,8 @@ def _render_report_html(
                     except:
                         score_values.append(1.0 if str(val).lower() == "true" else 0.0)
 
-        passed = all(s >= threshold for s in score_values) if strict_step_failures else float(final_score) >= threshold
+        score_to_float = lambda v: 1.0 if str(v).strip().lower() in ("true", "1") else 0.0 if str(v).strip().lower() in ("false", "0") else float(v)
+        passed = all(score_to_float(s) >= threshold for s in score_values) if strict_step_failures else score_to_float(final_score) >= threshold
         if passed:
             passed_cases += 1
 

@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-
+import asyncio
 import logging
 import uuid
-from typing import Optional
+from typing import Optional, List, Dict, Any, Callable
 
 from pyrit.attacks.base.attack_config import (
     AttackConverterConfig,
@@ -53,8 +53,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
-        max_attempts_on_failure: int = 0,
-        orchestrator_identifier = None,
+        max_attempts_on_failure: int = 0
     ) -> None:
         """
         Initialize the prompt injection attack strategy.
@@ -103,8 +102,6 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             raise ValueError("max_attempts_on_failure must be a non-negative integer")
 
         self._max_attempts_on_failure = max_attempts_on_failure
-
-        self._orchestrator_identifier = orchestrator_identifier
 
     def _validate_context(self, *, context: SingleTurnAttackContext) -> None:
         """
@@ -200,6 +197,108 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
 
         return result
 
+    async def _perform_batch_attack_async(
+            self,
+            *,
+            attack_contexts: list[SingleTurnAttackContext]
+    ) -> list[AttackResult]:
+        """
+        Perform a batch of single-turn attacks concurrently.
+
+        Args:
+            attack_contexts (list[SingleTurnAttackContext]): List of contexts for each attack.
+
+        Returns:
+            list[AttackResult]: List of results for each attack.
+        """
+        tasks = [
+            self.execute_with_context_async(context=context)
+            for context in attack_contexts
+        ]
+        return await asyncio.gather(*tasks)
+
+    # Supports both multi-turn and single-turn QA input for direct attack usage.
+    async def perform_dataset_attack(
+            self,
+            qa_pairs: List[Dict[str, Any]],
+            thread_id_injector: Optional[Callable[[str, str], str]] = None
+    ) -> Any:
+        """
+        Executes a batch of QA pairs (multi-turn or single-turn).
+        Supports thread ID injection for HTTP-based targets if a thread_id_injector is provided.
+
+        Args:
+            qa_pairs: List of QA dicts with either 'question'/'expected_outcome' (single-turn) or 'conversation' (multi-turn)
+            thread_id_injector: Callable for HTTP thread ID injection (optional)
+
+        Returns:
+            List of results, one per input QA/conversation.
+        """
+        single_turn_objectives = []
+        single_turn_expected_outputs = []
+        start_request_copy = getattr(self._objective_target, "http_request", None)
+        results = []
+
+        for i, qa in enumerate(qa_pairs):
+            if start_request_copy is not None:
+                self._objective_target.http_request = start_request_copy
+
+            if "conversation" in qa:
+                conversation_id = str(uuid.uuid4())
+                is_thread_id_set = False
+
+                for idx, turn in enumerate(qa["conversation"]):
+                    prompt_text = turn["question"]
+                    expected_output = turn.get("expected_outcome")
+
+                    context = SingleTurnAttackContext(
+                        objective=prompt_text,
+                        prepended_conversation=[],
+                        memory_labels={},
+                        conversation_id=conversation_id,
+                        expected_output=expected_output,
+                    )
+                    result = await self.execute_with_context_async(context=context)
+                    prompt_response = result.last_response if result else None
+
+                    # Inject thread ID once if present in first assistant response
+                    if idx == 0 and not is_thread_id_set and thread_id_injector:
+                        if prompt_response:
+                            thread_id = getattr(prompt_response, "prompt_metadata", {}).get("thread_id")
+                            if thread_id and hasattr(self._objective_target, "http_request"):
+                                self._objective_target.http_request = thread_id_injector(
+                                    self._objective_target.http_request, thread_id
+                                )
+                                is_thread_id_set = True
+                        else:
+                            print("Thread ID not found in first turn's response. Aborting this conversation.")
+                            break
+
+                    # We only need one result per conversation, after last turn (if thread set)
+                    if idx == len(qa["conversation"]) - 1 and is_thread_id_set:
+                        results.append(result)
+                    await asyncio.sleep(1)
+            else:
+                # Single-turn QA
+                single_turn_objectives.append(qa["question"])
+                single_turn_expected_outputs.append(qa.get("expected_outcome"))
+
+        # Batched single-turns
+        if single_turn_objectives:
+            batch_contexts = [
+                SingleTurnAttackContext(
+                    objective=obj,
+                    prepended_conversation=[],
+                    memory_labels={},
+                    expected_output=exp,
+                )
+                for obj, exp in zip(single_turn_objectives, single_turn_expected_outputs)
+            ]
+            batch_results = await self._perform_batch_attack_async(attack_contexts=batch_contexts)
+            results.extend(batch_results)
+
+        return results
+
     def _determine_attack_outcome(
             self, *, response: Optional[PromptRequestResponse], score: Optional[Score], context: SingleTurnAttackContext
     ) -> tuple[AttackOutcome, Optional[str]]:
@@ -287,7 +386,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=context.memory_labels,  # combined with strategy labels at _setup()
-            orchestrator_identifier=self._orchestrator_identifier,
+            orchestrator_identifier=self.get_identifier(),
         )
 
     async def _evaluate_response_async(self, *, response: PromptRequestResponse, objective: str) -> Optional[Score]:

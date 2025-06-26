@@ -283,8 +283,11 @@ class RedTeamingAttack(AttackStrategy[MultiTurnAttackContext, AttackResult]):
         retry_count = 0
         # Execute conversation turns
         while context.executed_turns < self._max_turns and not achieved_objective:
-            if context.executed_turns == 1:
-                print(f"\nStarting new chat...")
+            if context.executed_turns == 0:
+                if retry_count == 0:
+                    print(f"\nStarting new chat...")
+                else:
+                    print(f"Retrying...")
             else:
                 print(f"\nContinuing chat with thread ID: {thread_id}")
 
@@ -302,7 +305,7 @@ class RedTeamingAttack(AttackStrategy[MultiTurnAttackContext, AttackResult]):
             context.last_score = await self._score_response_async(context=context)
 
             # Extract and inject thread_id with retries
-            if context.executed_turns == 1:
+            if context.executed_turns == 0:
                 thread_id = context.last_response.request_pieces[0].prompt_metadata.get("thread_id")
                 if thread_id and self._objective_target.http_request:
                     self._objective_target.http_request = self._thread_id_injector(
@@ -321,7 +324,6 @@ class RedTeamingAttack(AttackStrategy[MultiTurnAttackContext, AttackResult]):
 
             # Increment the executed turns
             context.executed_turns += 1
-            await asyncio.sleep(15)
 
             # Prepare the result
         return AttackResult(
