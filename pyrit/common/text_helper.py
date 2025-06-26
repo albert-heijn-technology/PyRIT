@@ -24,7 +24,6 @@ def format_execution_time(seconds: float) -> str:
 
 
 def _get_attr_or_key(obj, attr: str, default=None):
-    """Helper to get attribute or dict key safely."""
     if isinstance(obj, dict):
         return obj.get(attr, default)
     return getattr(obj, attr, default)
@@ -39,7 +38,6 @@ def _render_report_html(
         is_chat_eval: bool,
         strict_step_failures: bool
 ) -> str:
-
     passed_cases = 0
     total_cases = len(results)
 
@@ -79,174 +77,84 @@ def _render_report_html(
 """
 
     for idx, result in enumerate(results, start=1):
-        # Objective detection: try keys first, then attributes
-        objective = _get_attr_or_key(result, "objective")
-        if objective is None:
-            objective = _get_attr_or_key(result, "prompt")
-        if objective is None:
-            conversation = _get_attr_or_key(result, "conversation", [])
-            first_user = next((msg for msg in conversation if _get_attr_or_key(msg, "role") == "user"), {})
-            objective = _get_attr_or_key(first_user, "message", "N/A")
-        if objective is None:
-            objective = "N/A"
-
+        objective = _get_attr_or_key(result, "objective") or _get_attr_or_key(result, "prompt") or "N/A"
         objective = sanitize(objective)
 
-        if is_chat_eval:
-            transcript = _get_attr_or_key(result, "transcript", [])
-            if not transcript:
-                conversation = _get_attr_or_key(result, "conversation", [])
-                for i in range(0, len(conversation), 2):
-                    turn = {"turn_index": (i // 2) + 1, "pieces": []}
-                    if i < len(conversation):
-                        turn["pieces"].append({
-                            "role": _get_attr_or_key(conversation[i], "role", "N/A"),
-                            "converted_value": _get_attr_or_key(conversation[i], "message", "N/A"),
-                            "scores": _get_attr_or_key(conversation[i], "scores", [])
-                        })
-                    if i + 1 < len(conversation):
-                        turn["pieces"].append({
-                            "role": _get_attr_or_key(conversation[i + 1], "role", "N/A"),
-                            "converted_value": _get_attr_or_key(conversation[i + 1], "message", "N/A"),
-                            "scores": _get_attr_or_key(conversation[i + 1], "scores", [])
-                        })
-                    transcript.append(turn)
+        # Normalize transcript
+        transcript = _get_attr_or_key(result, "transcript")
+        if transcript is None:
+            prompt = result.get("prompt")
+            response = result.get("assistant_response")
+            scores = result.get("scores", [])
+            if prompt is not None and response is not None:
+                pieces = [
+                    {"role": "user", "converted_value": prompt, "scores": []},
+                    {"role": "assistant", "converted_value": response, "scores": scores}
+                ]
+                transcript = [{"turn_index": 1, "pieces": pieces}]
+            else:
+                transcript = _get_attr_or_key(result, "conversation", [])
 
-            aggregated_metrics = _get_attr_or_key(result, "aggregated_metrics", {})
-            turns = aggregated_metrics.get("total_turns", len(transcript))
-            raw_score = aggregated_metrics.get("final_score", 0.0)
+        # Check if any expected_output present for this result
+        has_expected = False
+        if not is_chat_eval:
+            for turn in transcript:
+                for piece in turn.get("pieces", []):
+                    for score in piece.get("scores", []):
+                        if score.get("expected_output"):
+                            has_expected = True
+                            break
+                    if has_expected:
+                        break
+                if has_expected:
+                    break
 
-            if isinstance(raw_score, str):
-                if raw_score.lower() == "true":
-                    final_score = True
-                elif raw_score.lower() == "false":
-                    final_score = False
-                else:
+        # Determine metrics
+        aggregated = result.get("aggregated_metrics", {})
+        turns = aggregated.get("total_turns", len(transcript))
+        final_score = aggregated.get("final_score")
+        if final_score is None:
+            if len(transcript) == 1:
+                assistant = next((p for p in transcript[0]["pieces"] if p["role"] == "assistant"), {})
+                vals = [float(s.get("score", s.get("score_value", 0))) for s in assistant.get("scores", [])]
+                final_score = max(vals, default=0.0)
+            else:
+                final_score = 0.0
+
+        # Collect step scores
+        score_values = []
+        for turn in transcript:
+            for piece in turn["pieces"]:
+                for score in piece.get("scores", []):
+                    val = score.get("score", score.get("score_value", 0))
                     try:
-                        final_score = float(raw_score)
-                    except ValueError:
-                        final_score = 0.0
-            else:
-                final_score = raw_score
+                        score_values.append(float(val))
+                    except:
+                        score_values.append(1.0 if str(val).lower() == "true" else 0.0)
 
-            score_values = []
-            for turn in transcript:
-                for piece in turn["pieces"]:
-                    scores_html = ""
-                    for score in piece.get("scores", []):
-                        val = score.get("score", score.get("score_value", None))
-                        rationale = score.get("rationale", score.get("score_rationale", None))
-                        if val is None:
-                            val = 0.0
-                        else:
-                            try:
-                                val = float(val)
-                            except Exception:
-                                val = True if str(val).lower() == "true" else False
-
-                        if rationale is None:
-                            rationale = "N/A"
-
-                        cls = "score-pass" if (isinstance(val, (int, float)) and val >= threshold) else "score-fail"
-                        if isinstance(val, bool):
-                            val_display = "✔️ True" if val else "❌ False"
-                        else:
-                            val_display = f"{val:.2f}"
-
-                        scores_html += f"<div><strong class='{cls}'>{val_display}</strong><div class='explanation'>{sanitize(rationale)}</div></div>"
-
-            if strict_step_failures:
-                passed = all(s >= threshold for s in score_values)
-            else:
-                try:
-                    passed = float(final_score) >= threshold
-                except Exception:
-                    passed = str(final_score).lower() == "true"
-
-        else:
-            # Dataset report: single or multi-step
-            conversation = _get_attr_or_key(result, "conversation")
-            if conversation:
-                conv = conversation
-                transcript = []
-                for i in range(0, len(conv), 2):
-                    turn = {"turn_index": (i // 2) + 1, "pieces": []}
-                    if i < len(conv):
-                        turn["pieces"].append({
-                            "role": _get_attr_or_key(conv[i], "role", "N/A"),
-                            "converted_value": _get_attr_or_key(conv[i], "message", "N/A"),
-                            "scores": _get_attr_or_key(conv[i], "scores", [])
-                        })
-                    if i + 1 < len(conv):
-                        turn["pieces"].append({
-                            "role": _get_attr_or_key(conv[i + 1], "role", "N/A"),
-                            "converted_value": _get_attr_or_key(conv[i + 1], "message", "N/A"),
-                            "scores": _get_attr_or_key(conv[i + 1], "scores", [])
-                        })
-                    transcript.append(turn)
-                turns = len(transcript)
-            else:
-                transcript = [{
-                    "turn_index": 1,
-                    "pieces": [
-                        {"role": "user", "converted_value": _get_attr_or_key(result, "prompt", "N/A")},
-                        {
-                            "role": "assistant",
-                            "converted_value": _get_attr_or_key(result, "assistant_response", "N/A"),
-                            "scores": _get_attr_or_key(result, "scores", [])
-                        }
-                    ]
-                }]
-                turns = 1
-
-            score_values = []
-            for turn in transcript:
-                for piece in turn["pieces"]:
-                    for score in piece.get("scores", []):
-                        val = score.get("score_value", 0.0)
-                        try:
-                            score_values.append(float(val))
-                        except Exception:
-                            score_values.append(1.0 if str(val).lower() == "true" else 0.0)
-
-            if strict_step_failures:
-                passed = all(s >= threshold for s in score_values)
-            else:
-                passed = min(score_values, default=0.0) >= threshold
-
-            if turns == 1:
-                final_score = max(score_values, default=0.0)
-            else:
-                final_score = min(score_values, default=0.0)
-
+        passed = all(s >= threshold for s in score_values) if strict_step_failures else float(final_score) >= threshold
         if passed:
             passed_cases += 1
 
         badge = "pass" if passed else "fail"
         label = "Pass" if passed else "Fail"
 
-        summary_parts = [
-            f"Test Case {idx}: <strong>Objective:</strong> {objective}",
-            f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span>",
-            f"<strong>Turns:</strong> {turns}"
-        ]
+        # Summary line
+        summary = f"Test Case {idx}: <strong>Objective:</strong> {objective} | <strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | <strong>Turns:</strong> {turns}"
+        if isinstance(final_score, (int, float)):
+            summary += f" | <strong>Final Score:</strong> {final_score:.2f}"
+        html += f"<details><summary>{summary}</summary><table>"
 
-        if not isinstance(final_score, bool):
-            final_score_display = f"{final_score:.2f}" if isinstance(final_score, (int, float)) else "N/A"
-            summary_parts.append(f"<strong>Final Score:</strong> {final_score_display}")
-
-        html += f"""
-        <details>
-          <summary>{' | '.join(summary_parts)}</summary>
-          <table>
-        """
-        # Update table header and row ordering for dataset report: input, assistant response, expected output, score.
+        # Table header
         if not is_chat_eval:
-            html += "<thead><tr><th>User</th><th>Assistant</th><th>Expected Output</th><th>Score</th></tr></thead>"
+            if has_expected:
+                html += "<thead><tr><th>User</th><th>Assistant</th><th>Expected Output</th><th>Score</th></tr></thead><tbody>"
+            else:
+                html += "<thead><tr><th>User</th><th>Assistant</th><th>Score</th></tr></thead><tbody>"
         else:
-            html += "<thead><tr><th>User</th><th>Assistant</th><th>Score</th></tr></thead>"
-        html += "<tbody>"
+            html += "<thead><tr><th>User</th><th>Assistant</th><th>Score</th></tr></thead><tbody>"
 
+        # Table rows
         for turn in transcript:
             user_piece = next((p for p in turn["pieces"] if p["role"] == "user"), {"converted_value": ""})
             assistant_piece = next((p for p in turn["pieces"] if p["role"] == "assistant"), {"converted_value": "", "scores": []})
@@ -255,17 +163,15 @@ def _render_report_html(
             assistant_text = sanitize(assistant_piece["converted_value"])
 
             scores_html = ""
+            expected_html = sanitize(assistant_piece["scores"][0].get("expected_output", "")) if has_expected else None
             for score in assistant_piece.get("scores", []):
                 val = score.get("score", score.get("score_value", None))
                 rationale = sanitize(score.get("rationale", score.get("score_rationale", "N/A")))
                 try:
-                    if val is None:
-                        val = 0.0
-                    else:
-                        val = float(val)
-                except Exception:
+                    val = float(val)
+                except:
                     val = True if str(val).lower() == "true" else False
-                cls = "score-pass" if val >= threshold else "score-fail"
+                cls = "score-pass" if (isinstance(val, (int, float)) and val >= threshold) or val is True else "score-fail"
                 if isinstance(val, bool):
                     val_display = "✔️ True" if val else "❌ False"
                 else:
@@ -273,18 +179,16 @@ def _render_report_html(
                 scores_html += f"<div><strong class='{cls}'>{val_display}</strong><div class='explanation'>{rationale}</div></div>"
 
             if not is_chat_eval:
-                if assistant_piece.get("scores") and len(assistant_piece["scores"]) > 0:
-                    assistant_expected = sanitize(assistant_piece["scores"][0].get("expected_output", "N/A"))
+                if has_expected:
+                    html += f"<tr><td>{user_text}</td><td>{assistant_text}</td><td>{expected_html}</td><td>{scores_html}</td></tr>"
                 else:
-                    assistant_expected = "N/A"
-                html += f"<tr><td>{user_text}</td><td>{assistant_text}</td><td>{assistant_expected}</td><td>{scores_html}</td></tr>"
+                    html += f"<tr><td>{user_text}</td><td>{assistant_text}</td><td>{scores_html}</td></tr>"
             else:
                 html += f"<tr><td>{user_text}</td><td>{assistant_text}</td><td>{scores_html}</td></tr>"
 
         html += "</tbody></table></details>"
 
-    html = html.replace("{passed}", str(passed_cases))
-    html = html.replace("{failed}", str(total_cases - passed_cases))
+    html = html.replace("{passed}", str(passed_cases)).replace("{failed}", str(total_cases - passed_cases))
     html += "</div></body></html>"
     return html
 
@@ -306,10 +210,8 @@ def generate_simulation_report(
         is_chat_eval=True,
         strict_step_failures=False
     )
-
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(html)
-
     print(f"\n✅ Simulation report saved to: {save_path}")
 
 
@@ -330,8 +232,6 @@ def generate_dataset_report(
         is_chat_eval=False,
         strict_step_failures=True
     )
-
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(html)
-
     print(f"\n✅ Dataset report saved to: {save_path}")

@@ -66,3 +66,5 @@ class AttackResult:
     # Additional information
     # Metadata can be included as key-value pairs to provide extra context
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Todo: Implement get_conversation_report_async

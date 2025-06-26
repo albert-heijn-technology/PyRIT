@@ -1,8 +1,8 @@
 import re
 import asyncio
 import uuid
-from typing import Any, Optional, Sequence, List, Dict, Callable, cast, LiteralString
-from warnings import deprecated
+from typing import Any, Optional, Sequence, List, Dict, Callable, cast
+from typing_extensions import deprecated, LiteralString
 
 from pyrit.attacks import SingleTurnAttackContext, PromptSendingAttack, AttackConverterConfig, AttackScoringConfig, \
     AttackOutcome
@@ -185,9 +185,8 @@ class PromptSendingOrchestrator(Orchestrator):
         single_turn_objectives = []
         single_turn_expected_outputs = []
         start_request_copy = self._objective_target.http_request
-
+        orchestrator_results = []
         for i, qa in enumerate(qa_pairs):
-            print(f"\nExecuting test case: {i + 1}")
             self._objective_target.http_request = start_request_copy
 
             if "conversation" in qa:
@@ -197,9 +196,7 @@ class PromptSendingOrchestrator(Orchestrator):
                 for idx, turn in enumerate(qa["conversation"]):
                     prompt_text = turn["question"]
                     expected_output = turn["expected_outcome"]
-                    print("Question:", prompt_text)
 
-                    await asyncio.sleep(15)
                     result, prompt_response = await self.execute_step_async(
                         objective=prompt_text,
                         expected_output=expected_output,
@@ -222,6 +219,9 @@ class PromptSendingOrchestrator(Orchestrator):
                             print("Thread ID not found in first turn's response. Aborting this conversation.")
                             break
 
+                    # We only need one result per conversation, later we use it to fetch the full conversation if needed
+                    if idx == len(qa["conversation"]) - 1 and is_thread_id_set:
+                        orchestrator_results.append(result)
                     await asyncio.sleep(1)
             else:
                 # Single-turn QA
@@ -230,46 +230,10 @@ class PromptSendingOrchestrator(Orchestrator):
 
         # Run batched single-turn prompts
         if single_turn_objectives:
-            await self.execute_multiple_steps_async(
+            results = await self.execute_multiple_steps_async(
                 objectives=single_turn_objectives,
                 expected_outputs=single_turn_expected_outputs,
             )
+            orchestrator_results.extend(results)
 
-    def get_all_chat_results(self) -> List[Dict[str, Any]]:
-        messages = self.get_memory()
-        conv_dict: Dict[str, List[Dict[str, Any]]] = {}
-
-        for msg in messages:
-            conv_id = msg.conversation_id
-            if conv_id not in conv_dict:
-                conv_dict[conv_id] = []
-            entry = {
-                "role": msg.role,
-                "message": msg.converted_value
-            }
-            if msg.scores:
-                entry["scores"] = [
-                    {
-                        "score_value": s.score_value,
-                        "score_rationale": s.score_rationale,
-                        "expected_output": s.expected_output
-                    }
-                    for s in msg.scores
-                ]
-            conv_dict[conv_id].append(entry)
-
-        results = []
-        for conv_id, conversation in conv_dict.items():
-            if len(conversation) == 2 and conversation[0]["role"].lower() == "user" and conversation[1]["role"].lower() == "assistant":
-                results.append({
-                    "conversation_id": conv_id,
-                    "prompt": conversation[0]["message"],
-                    "assistant_response": conversation[1]["message"],
-                    "scores": conversation[1].get("scores", [])
-                })
-            else:
-                results.append({
-                    "conversation_id": conv_id,
-                    "conversation": conversation
-                })
-        return results
+        return orchestrator_results

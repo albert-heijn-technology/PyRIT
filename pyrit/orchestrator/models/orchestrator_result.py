@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import logging
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, List, Dict, Union
 
 from colorama import Fore, Style
 
@@ -114,32 +114,31 @@ class OrchestratorResult:
         Groups user and assistant messages into turns:
           - Each turn contains up to two messages: one user message, one assistant message.
           - Each piece stores both original_value and converted_value.
-          - Assistant pieces may have scores if found in memory.
+          - Assistant pieces may have scores and expected_output if found in memory.
           - The final score is taken from the last assistant piece with a score in the transcript.
         """
-        report = {}
-        transcript = []
-        scores_by_turn = []
+        report: Dict[str, Union[str, int, List]] = {}
+        transcript: List[Dict] = []
+        scores_by_turn: List[Dict] = []
 
-        # Retrieve conversation messages from memory using the conversation ID.
+        # Retrieve messages from memory
         target_messages = self._memory.get_conversation(conversation_id=self.conversation_id)
         if not target_messages:
-            report["error"] = "No conversation with the target"
-            return report
+            return {"error": "No conversation with the target"}
 
-        # Set basic conversation info.
+        # Basic conversation info
         report["objective"] = self.objective
-        report["achieved_objective"] = self.status == "success"
+        report["achieved_objective"] = (self.status == "success")
 
         turn_index = 1
         i = 0
         n = len(target_messages)
 
-        # Process messages in pairs: (user, assistant).
+        # Pair messages into turns
         while i < n:
             turn_data = {"turn_index": turn_index, "pieces": []}
 
-            # 1) Process user message (if exists)
+            # User message
             if i < n:
                 turn_data["pieces"].extend(
                     self._build_piece_data(
@@ -151,7 +150,7 @@ class OrchestratorResult:
                 )
                 i += 1
 
-            # 2) Process assistant message (if exists)
+            # Assistant message
             if i < n:
                 turn_data["pieces"].extend(
                     self._build_piece_data(
@@ -166,12 +165,12 @@ class OrchestratorResult:
             transcript.append(turn_data)
             turn_index += 1
 
-        # Determine the final score from the last assistant piece that has scores.
+        # Locate final_score from last assistant piece
         final_score = None
         for turn in reversed(transcript):
             for piece in reversed(turn["pieces"]):
-                if piece["role"].lower() == "assistant" and piece["scores"]:
-                    final_score = piece["scores"][0]["score"]
+                if piece.get("role", "").lower() == "assistant" and piece.get("scores"):
+                    final_score = piece["scores"][0].get("score")
                     break
             if final_score is not None:
                 break
@@ -182,31 +181,24 @@ class OrchestratorResult:
             "final_score": final_score,
             "scores_by_turn": scores_by_turn
         }
-        report["additional_metadata"] = {
-            "conversation_id": self.conversation_id
-        }
-
+        report["additional_metadata"] = {"conversation_id": self.conversation_id}
         return report
 
     def _build_piece_data(
             self,
             message,
             turn_index: int,
-            scores_by_turn: list,
+            scores_by_turn: List[Dict],
             is_assistant: bool
-    ) -> list:
+    ) -> List[Dict]:
         """
-        Helper function to convert each piece in a message into a dict with:
+        Convert each message piece into dict with:
           - role
           - original_value
           - converted_value
-          - scores (assistant only)
-
-        If 'is_assistant' is True, we retrieve scores from memory.
-        If any scores are found, they are added to both the piece data
-        and 'scores_by_turn' for step-by-step breakdown.
+          - scores (assistant only, including expected_output if present)
         """
-        pieces_data = []
+        pieces_data: List[Dict] = []
         for piece in message.request_pieces:
             piece_data = {
                 "role": piece.role,
@@ -215,21 +207,24 @@ class OrchestratorResult:
                 "scores": []
             }
 
-            # Only retrieve scores if this piece is truly from the assistant
             if is_assistant and piece.role.lower() == "assistant":
-                scores = self._memory.get_scores_by_prompt_ids(
+                raw_scores = self._memory.get_scores_by_prompt_ids(
                     prompt_request_response_ids=[str(piece.id)]
                 )
-                if scores:
-                    piece_scores = []
-                    for s in scores:
-                        piece_scores.append({
+                if raw_scores:
+                    piece_scores: List[Dict] = []
+                    for s in raw_scores:
+                        score_entry = {
                             "score": s.score_value,
                             "rationale": s.score_rationale
-                        })
+                        }
+                        if hasattr(s, "expected_output") and s.expected_output:
+                            score_entry["expected_output"] = s.expected_output
+                        piece_scores.append(score_entry)
+
                     piece_data["scores"] = piece_scores
 
-                    # Record for step-by-step breakdown
+                    # record for step breakdown
                     if piece_scores:
                         scores_by_turn.append({
                             "turn_index": turn_index,
