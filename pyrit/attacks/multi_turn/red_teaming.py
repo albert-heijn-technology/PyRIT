@@ -80,17 +80,17 @@ class RedTeamingAttack(AttackStrategy[MultiTurnAttackContext, AttackResult]):
 
     def __init__(
             self,
-            *,
-            objective_target: PromptTarget,
-            attack_adversarial_config: AttackAdversarialConfig,
-            attack_converter_config: Optional[AttackConverterConfig] = None,
-            attack_scoring_config: Optional[AttackScoringConfig] = None,
-            prompt_normalizer: Optional[PromptNormalizer] = None,
-            evaluate_chat: bool = False,
-            scorer_type: str = "float_scale",
-            thread_id_injector: Optional[Callable[[str, str], str]] = None,
-            max_retries: int = 3,
-            max_turns: int = 5,
+        *,
+        objective_target: PromptTarget,
+        attack_adversarial_config: AttackAdversarialConfig,
+        attack_converter_config: Optional[AttackConverterConfig] = None,
+        attack_scoring_config: Optional[AttackScoringConfig] = None,
+        prompt_normalizer: Optional[PromptNormalizer] = None,
+        evaluate_chat: bool = False,
+        scorer_type: str = "float_scale",
+        thread_id_injector: Optional[Callable[[str, str], str]] = None,
+        max_retries: int = 3,
+        max_turns: int = 5,
     ):
         """
         Initialize the red teaming attack strategy.

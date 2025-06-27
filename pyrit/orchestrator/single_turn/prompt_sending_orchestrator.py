@@ -53,16 +53,16 @@ class PromptSendingOrchestrator(Orchestrator):
     """
 
     def __init__(
-            self,
-            objective_target: PromptTarget,
-            request_converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-            response_converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
-            objective_scorer: Optional[Scorer] = None,
-            auxiliary_scorers: Optional[list[Scorer]] = None,
-            should_convert_prepended_conversation: bool = True,
-            batch_size: int = 10,
-            retries_on_objective_failure: int = 0,
-            verbose: bool = False,
+        self,
+        objective_target: PromptTarget,
+        request_converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
+        response_converter_configurations: Optional[list[PromptConverterConfiguration]] = None,
+        objective_scorer: Optional[Scorer] = None,
+        auxiliary_scorers: Optional[list[Scorer]] = None,
+        should_convert_prepended_conversation: bool = True,
+        batch_size: int = 10,
+        retries_on_objective_failure: int = 0,
+        verbose: bool = False,
     ) -> None:
         """
         Args:
@@ -113,7 +113,7 @@ class PromptSendingOrchestrator(Orchestrator):
         )
 
     def set_skip_criteria(
-            self, *, skip_criteria: PromptFilterCriteria, skip_value_type: PromptConverterState = "original"
+        self, *, skip_criteria: PromptFilterCriteria, skip_value_type: PromptConverterState = "original"
     ):
         """
         Sets the skip criteria for the orchestrator.
@@ -123,12 +123,12 @@ class PromptSendingOrchestrator(Orchestrator):
         self._prompt_normalizer.set_skip_criteria(skip_criteria=skip_criteria, skip_value_type=skip_value_type)
 
     async def run_attack_async(
-            self,
-            *,
-            objective: str,
-            seed_prompt: Optional[SeedPromptGroup] = None,
-            prepended_conversation: Optional[list[PromptRequestResponse]] = None,
-            memory_labels: Optional[dict[str, str]] = None,
+        self,
+        *,
+        objective: str,
+        seed_prompt: Optional[SeedPromptGroup] = None,
+        prepended_conversation: Optional[list[PromptRequestResponse]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
     ) -> OrchestratorResult:
         """
         Runs the attack.
@@ -166,12 +166,12 @@ class PromptSendingOrchestrator(Orchestrator):
         )
 
     async def run_attacks_async(
-            self,
-            *,
-            objectives: list[str],
-            seed_prompts: Optional[list[SeedPromptGroup]] = None,
-            prepended_conversations: Optional[list[list[PromptRequestResponse]]] = None,
-            memory_labels: Optional[dict[str, str]] = None,
+        self,
+        *,
+        objectives: list[str],
+        seed_prompts: Optional[list[SeedPromptGroup]] = None,
+        prepended_conversations: Optional[list[list[PromptRequestResponse]]] = None,
+        memory_labels: Optional[dict[str, str]] = None,
     ) -> list[OrchestratorResult]:
         """
         Runs multiple attacks in parallel using batch_size.
@@ -215,10 +215,10 @@ class PromptSendingOrchestrator(Orchestrator):
         return [result for result in results if result is not None]
 
     async def _run_attacks_with_only_objectives_async(
-            self,
-            *,
-            objectives: list[str],
-            memory_labels: Optional[dict[str, str]] = None,
+        self,
+        *,
+        objectives: list[str],
+        memory_labels: Optional[dict[str, str]] = None,
     ) -> list[OrchestratorResult]:
         """
         Runs multiple role play attacks in parallel using batch_size.
@@ -246,5 +246,4 @@ class PromptSendingOrchestrator(Orchestrator):
             task_arguments=batch_item_keys,
             memory_labels=memory_labels,
         )
-
         return results

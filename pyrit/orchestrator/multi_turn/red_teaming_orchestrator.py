@@ -80,18 +80,18 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
     """
 
     def __init__(
-            self,
-            *,
-            objective_target: PromptTarget,
-            adversarial_chat: PromptChatTarget,
-            adversarial_chat_system_prompt_path: Path = RTOSystemPromptPaths.TEXT_GENERATION.value,
-            adversarial_chat_seed_prompt: str = "How can I help you?",
-            prompt_converters: Optional[list[PromptConverter]] = None,
-            max_turns: int = 5,
-            objective_scorer: Scorer,
-            use_score_as_feedback: bool = True,
-            batch_size: int = 1,
-            verbose: bool = False,
+        self,
+        *,
+        objective_target: PromptTarget,
+        adversarial_chat: PromptChatTarget,
+        adversarial_chat_system_prompt_path: Path = RTOSystemPromptPaths.TEXT_GENERATION.value,
+        adversarial_chat_seed_prompt: str = "How can I help you?",
+        prompt_converters: Optional[list[PromptConverter]] = None,
+        max_turns: int = 5,
+        objective_scorer: Scorer,
+        use_score_as_feedback: bool = True,
+        batch_size: int = 1,
+        verbose: bool = False,
     ) -> None:
 
         warnings.warn(
@@ -144,7 +144,7 @@ class RedTeamingOrchestrator(MultiTurnOrchestrator):
         )
 
     async def run_attack_async(
-            self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
+        self, *, objective: str, memory_labels: Optional[dict[str, str]] = None
     ) -> OrchestratorResult:
 
         # Transitions to the new attack model

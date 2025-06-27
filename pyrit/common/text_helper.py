@@ -16,7 +16,7 @@ def write_txt(file, examples: List[Dict[str, str]]):
 def sanitize(text: str) -> str:
     return str(text).replace("<", "&lt;").replace(">", "&gt;")
 
-
+# Todo: Remove report generation
 def format_execution_time(seconds: float) -> str:
     seconds = int(round(seconds))
     mins, secs = divmod(seconds, 60)

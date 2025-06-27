@@ -67,6 +67,7 @@ class AttackResult:
     # Metadata can be included as key-value pairs to provide extra context
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    # Builds a dictionary representation of the interaction based on attack result.
     async def get_conversation_report_async(self) -> dict:
         """
         Returns a structured conversation report for HTML reporting or metrics.
