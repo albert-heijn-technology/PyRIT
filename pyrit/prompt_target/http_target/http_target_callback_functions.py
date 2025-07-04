@@ -4,7 +4,7 @@
 
 import json
 import re
-from typing import Callable
+from typing import Callable, List, Any
 
 import requests
 
@@ -82,114 +82,89 @@ def _fetch_key(data: dict, key: str):
 
 def get_http_regex_stream_callback_function(key: str) -> Callable:
     """
-    Purpose: Extracts text messages from an HTTP response using regex.
-    Returns: A function that parses the HTTP response to extract text messages.
+    Purpose: returns a function to extract text messages from an HTTP response using regex.
+
+    Args:
+        key (str): Regex pattern for extracting messages
+
+    Returns:
+        Callable: function to extract matching messages
     """
-
     def extract_text_messages(response: requests.Response) -> str:
-        """
-        Purpose: Extracts text messages from the response content using regex.
-        Parameters:
-            response (requests.Response): The HTTP response to parse.
-        Returns: The extracted text messages as a single string.
-        """
         text = response.text
-        # Use regex to find all occurrences of 'event:TEXT_MESSAGE' followed by 'data:'
         messages = re.findall(key, text)
-        # Join the extracted message parts together into one string
-        full_message = ''.join(messages)
-        return full_message
-
+        return ''.join(messages)
     return extract_text_messages
-
-# Cell 3: New MultiFieldResponseParser that uses the original helper functions
-
-import json
-import re
-from typing import Any, Callable, List
-import requests
 
 class MultiFieldResponseParser:
     """
-    Combines JSON, single-match regex, and stream regex parsing in one class.
-    For each field, it uses one of the original helper functions internally.
+    Purpose: combines JSON, regex, and stream parsing in one class.
+    Each field uses the appropriate parsing function.
 
-    Example field definition list (pass this into the constructor):
-      [
-        {"name": "text",    "type": "stream", "pattern": r"regex_pattern_for_text_messages"},
-        {"name": "data",    "type": "regex",  "pattern": r"regex_pattern_for_data"},
-        {"name": "meta",    "type": "regex",  "pattern": r"regex_pattern_for_meta"},
-        {"name": "content", "type": "json",   "json_key": "json.path.to.content"},
-      ]
+    Example field definition list:
+        [
+            {"name": "text",    "type": "stream", "pattern": r"..."},
+            {"name": "data",    "type": "regex",  "pattern": r"..."},
+            {"name": "meta",    "type": "regex",  "pattern": r"..."},
+            {"name": "content", "type": "json",   "json_key": "..."},
+        ]
     """
-
     def __init__(self, field_definitions: List[dict]):
+        """
+        Initializes the parser with a list of field definitions.
+        Each field has a name, type, and pattern/json_key.
+        """
         self.parsers: List[tuple[str, Callable[[requests.Response], Any]]] = []
-
         for fld in field_definitions:
             name = fld.get("name")
             type_ = fld.get("type", "").lower()
             if type_ not in {"json", "regex", "stream"}:
                 raise ValueError(f"Unsupported type '{type_}' for field '{name}'.")
-
             if type_ == "json":
                 json_key = fld.get("json_key")
                 if not json_key:
                     raise ValueError(f"Field '{name}' in 'json' type requires 'json_key'.")
                 parser_fn = get_http_target_json_response_callback_function(json_key)
-
             elif type_ == "regex":
                 pattern = fld.get("pattern")
                 if not pattern:
                     raise ValueError(f"Field '{name}' in 'regex' type requires 'pattern'.")
-
-                # Wrap regex parser with JSON parse if applicable
                 def make_regex_parser(pat):
                     def parser(response):
                         text = response.content.decode("utf-8", errors="replace")
                         match = re.search(pat, text)
                         if match:
                             content = match.group(1).strip()
-                            # Try JSON parse if looks like JSON
-                            if content.startswith("{") and content.endswith("}"):
-                                try:
-                                    return json.loads(content)
-                                except json.JSONDecodeError:
-                                    pass
                             return content
                         return ""
                     return parser
-
                 parser_fn = make_regex_parser(pattern)
-
-            else:  # type_ == "stream"
+            else:  # stream
                 pattern = fld.get("pattern")
                 if not pattern:
                     raise ValueError(f"Field '{name}' in 'stream' type requires 'pattern'.")
-
                 def make_stream_parser(pat):
                     def parser(response):
                         text = response.content.decode("utf-8", errors="replace")
                         matches = re.findall(pat, text, re.DOTALL)
                         return "".join(matches).strip() if matches else ""
                     return parser
-
                 parser_fn = make_stream_parser(pattern)
-
             self.parsers.append((name, parser_fn))
 
-    def __call__(self, response: requests.Response) -> dict[str, Any]:
-        result: dict[str, Any] = {}
+    def __call__(self, response: requests.Response) -> dict[str, str]:
+        """
+        Parses the HTTP response and returns a dict of field values (all as string).
+        If no fields are populated, returns a single 'raw_response' field.
+        """
+        result: dict[str, str] = {}
         raw_text = response.content.decode("utf-8", errors="replace")
-
         for name, fn in self.parsers:
             try:
                 value = fn(response)
             except Exception:
                 value = ""
-            result[name] = value if value is not None else ""
-
+            result[name] = str(value) if value is not None else ""
         if not any(result.values()):
             return {"raw_response": raw_text}
-
         return result
