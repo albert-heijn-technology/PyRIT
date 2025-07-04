@@ -19,7 +19,6 @@ from pyrit.attacks.base.attack_context import (
     ConversationSession,
     MultiTurnAttackContext,
 )
-from pyrit.attacks.base.attack_result import AttackOutcome, AttackResult
 from pyrit.attacks.base.attack_strategy import AttackStrategy
 from pyrit.attacks.components.conversation_manager import (
     ConversationManager,
@@ -29,6 +28,8 @@ from pyrit.attacks.components.objective_evaluator import ObjectiveEvaluator
 from pyrit.common.path import RED_TEAM_ORCHESTRATOR_PATH
 from pyrit.common.utils import combine_dict
 from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
     PromptRequestResponse,
     Score,
     SeedPrompt,
