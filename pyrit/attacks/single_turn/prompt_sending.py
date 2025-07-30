@@ -16,6 +16,8 @@ from pyrit.common.utils import combine_dict
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
+    ConversationReference,
+    ConversationType,
     PromptRequestResponse,
     Score,
     SeedPrompt,
