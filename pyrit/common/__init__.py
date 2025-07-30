@@ -26,6 +26,8 @@ from pyrit.common.singleton import Singleton
 from pyrit.common.utils import combine_dict, combine_list, get_random_indices
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.common.deprecation import deprecation_message
+from pyrit.common.report_generator import get_conversation_report_async
+from pyrit.common.report_generator import create_report
 
 __all__ = [
     "AZURE_SQL",
@@ -51,4 +53,6 @@ __all__ = [
     "Singleton",
     "YamlLoadable",
     "deprecation_message",
+    "get_conversation_report_async",
+    "create_report",
 ]

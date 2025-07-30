@@ -91,7 +91,7 @@ class Evaluator(Scorer):
             evaluation_criteria=evaluation_criteria, metadata=metadata
         )
 
-    async def score_async(self, request_response: PromptRequestPiece, *, task: Optional[str] = None) -> list[Score]:
+    async def _score_async(self, request_response: PromptRequestPiece, *, task: Optional[str] = None) -> list[Score]:
         """
         Scores the given request_response using "self-ask" for the chat target and adds score to memory.
 
