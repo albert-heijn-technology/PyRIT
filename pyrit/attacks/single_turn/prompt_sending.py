@@ -283,19 +283,18 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
                 single_turn_objectives.append(qa["question"])
                 single_turn_expected_outputs.append(qa.get("expected_outcome"))
 
-        # Batched single-turns
         if single_turn_objectives:
-            batch_contexts = [
-                SingleTurnAttackContext(
+            for obj, exp in zip(single_turn_objectives, single_turn_expected_outputs):
+                context = SingleTurnAttackContext(
                     objective=obj,
                     prepended_conversation=[],
                     memory_labels={},
                     expected_output=exp,
+                    conversation_id=str(uuid.uuid4())
                 )
-                for obj, exp in zip(single_turn_objectives, single_turn_expected_outputs)
-            ]
-            batch_results = await self._perform_batch_attack_async(attack_contexts=batch_contexts)
-            results.extend(batch_results)
+                # Directly await the result one by one (sequentially)
+                result = await self.execute_with_context_async(context=context)
+                results.append(result)
 
         return results
 

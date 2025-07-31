@@ -105,7 +105,6 @@ class HTTPTargetX(PromptTarget):
         if http_version and "HTTP/2" in http_version:
             http2_version = True
 
-        await asyncio.sleep(5)
         if self._client is not None:
             client = self._client
             cleanup_client = False
