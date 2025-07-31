@@ -58,9 +58,11 @@ class Evaluator(Scorer):
             evaluator_system_prompt_path: Optional[Path] = None,
             additional_evaluator_variables: Optional[dict] = None,
             scorer_type: Literal["true_false", "float_scale"] = "float_scale",
+            scorer_role: Optional[str] = None,
     ) -> None:
         self._prompt_target = chat_target
         self.scorer_type = scorer_type
+        self.scorer_role = scorer_role
         self._additional_evaluator_variables = additional_evaluator_variables or {}
 
         if not evaluator_yaml_path and not evaluator_question:
@@ -122,7 +124,7 @@ class Evaluator(Scorer):
             additional_evaluator_variables=self._additional_evaluator_variables,
         )
 
-        score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, expected_output=request_response.expected_output)
+        score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, expected_output=request_response.expected_output, scorer_role=self.scorer_role)
 
         self._memory.add_scores_to_memory(scores=[score])
         return [score]

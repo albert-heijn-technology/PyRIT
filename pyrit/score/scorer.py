@@ -39,6 +39,7 @@ class Scorer(abc.ABC):
     """
 
     scorer_type: ScoreType
+    scorer_role: str
 
     @property
     def _memory(self) -> MemoryInterface:
@@ -369,6 +370,7 @@ class Scorer(abc.ABC):
                 score_metadata=parsed_response.get(metadata_output_key),
                 prompt_request_response_id=scored_prompt_id,
                 expected_output=expected_output,
+                scorer_role=self.scorer_role,
                 task=task,
             )
 
@@ -545,6 +547,14 @@ class Scorer(abc.ABC):
         # Early return if no scorers provided
         if not has_auxiliary and not has_objective:
             return result
+
+        # Set the scorer roles of the scorers here
+        if has_auxiliary:
+            for scorer in auxiliary_scorers:
+                scorer.scorer_role = "auxiliary"
+        if has_objective:
+            for scorer in objective_scorers:
+                scorer.scorer_role = "objective"
 
         # Run both types of scoring concurrently if both are present
         if has_auxiliary and has_objective:

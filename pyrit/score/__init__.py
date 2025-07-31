@@ -34,6 +34,7 @@ from pyrit.score.self_ask_likert_scorer import LikertScalePaths, SelfAskLikertSc
 from pyrit.score.self_ask_refusal_scorer import SelfAskRefusalScorer
 from pyrit.score.self_ask_scale_scorer import SelfAskScaleScorer
 from pyrit.score.self_ask_true_false_scorer import SelfAskTrueFalseScorer, TrueFalseQuestion, TrueFalseQuestionPaths
+from pyrit.score.simple_text_length_scorer import SimpleTextLengthScorer
 from pyrit.score.substring_scorer import SubStringScorer
 from pyrit.score.true_false_inverter_scorer import TrueFalseInverterScorer
 from pyrit.score.self_ask_question_answer_scorer import SelfAskQuestionAnswerScorer
@@ -69,6 +70,7 @@ __all__ = [
     "QuestionAnswerScorer",
     "Scorer",
     "Evaluator",
+    "SimpleTextLengthScorer",
     "ScoreAggregator",
     "ScorerEvaluator",
     "ScorerMetrics",

@@ -49,6 +49,9 @@ class Score:
     # The task based on which the text is scored (the original attacker model's objective).
     task: str
 
+    # Scorer role
+    scorer_role: Optional[str]
+
     def __init__(
         self,
         *,
@@ -64,6 +67,7 @@ class Score:
         timestamp: Optional[datetime] = None,
         task: Optional[str] = None,
         expected_output: Optional[str] = None,
+        scorer_role: Optional[str] = None,
     ):
         self.id = id if id else uuid.uuid4()
         self.timestamp = timestamp if timestamp else datetime.now()
@@ -83,6 +87,7 @@ class Score:
         self.scorer_class_identifier = scorer_class_identifier or {}
         self.prompt_request_response_id = prompt_request_response_id
         self.expected_output = expected_output
+        self.scorer_role = scorer_role
         self.task = task
 
     def get_value(self):
@@ -130,6 +135,7 @@ class Score:
             "scorer_class_identifier": self.scorer_class_identifier,
             "prompt_request_response_id": str(self.prompt_request_response_id),
             "expected_output": self.expected_output,
+            "scorer_role": self.scorer_role,
             "timestamp": self.timestamp.isoformat(),
             "task": self.task,
         }
@@ -163,9 +169,10 @@ class UnvalidatedScore:
     task: str
     id: Optional[uuid.UUID | str] = None
     expected_output: Optional[str] = None
+    scorer_role: Optional[str] = None
     timestamp: Optional[datetime] = None
 
-    def to_score(self, *, score_value: str, expected_output: Optional[str] = None) -> Score:
+    def to_score(self, *, score_value: str, expected_output: Optional[str] = None, scorer_role: Optional[str] = None) -> Score:
         return Score(
             id=self.id,
             score_value=score_value,
@@ -177,6 +184,7 @@ class UnvalidatedScore:
             scorer_class_identifier=self.scorer_class_identifier,
             prompt_request_response_id=self.prompt_request_response_id,
             expected_output=expected_output,
+            scorer_role=scorer_role,
             timestamp=self.timestamp,
             task=self.task,
         )

@@ -1,13 +1,14 @@
-from pyrit.memory import CentralMemory
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Union
+import json
+
+from pyrit.memory import CentralMemory
 
 def sanitize(text: str) -> str:
     """Sanitize text for HTML display (except for trusted HTML snippets)."""
     return str(text).replace("<", "&lt;").replace(">", "&gt;")
 
-def render_expandable_top_fields(val: Any) -> str:
+def render_expandable_top_fields(val: Any, open_by_default=False) -> str:
     """
     Renders the top-level keys of a dict (or stringified dict) as expandable fields.
     All other types (lists, strings, etc.) are shown as <pre>.
@@ -32,8 +33,9 @@ def render_expandable_top_fields(val: Any) -> str:
                 val_str = json.dumps(v, ensure_ascii=False, indent=2)
             else:
                 val_str = str(v)
+            details_attr = " open" if open_by_default else ""
             html += (
-                f"<details class='expandfield'>"
+                f"<details class='expandfield'{details_attr}>"
                 f"<summary><strong>{sanitize(str(k))}</strong></summary>"
                 f"<pre>{sanitize(val_str)}</pre>"
                 f"</details>"
@@ -61,7 +63,6 @@ def create_report(
         description: str = "",
         execution_time: float = 0.0,
         is_chat_eval: bool = False,
-        strict_step_failures: bool = True,
         save_path: Union[str, Path] = "report.html"
 ):
     """
@@ -86,14 +87,14 @@ def create_report(
     table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
     th {{ 
       background: #0277bd; color: #fff; 
-      text-align: center; /* center header text */
+      text-align: center;
       font-weight: bold; 
       font-size: 1.06rem;
       padding: 12px 8px;
       letter-spacing: .02em;
     }}
     td {{ 
-      text-align: left;  /* left-align cell content */
+      text-align: left;
       padding: 10px;
       border-bottom: 1px solid #eee;
       vertical-align: top;
@@ -148,6 +149,12 @@ def create_report(
   </div>
 """
 
+    def safe_float(val):
+        try:
+            return float(val)
+        except Exception:
+            return 1.0 if str(val).lower() == "true" else 0.0
+
     for idx, result in enumerate(results, start=1):
         objective = _get_attr_or_key(result, "objective") or _get_attr_or_key(result, "prompt") or "N/A"
         objective = sanitize(objective)
@@ -166,106 +173,94 @@ def create_report(
             else:
                 transcript = _get_attr_or_key(result, "conversation", [])
 
-        has_expected = False
-        if not is_chat_eval:
-            for turn in transcript:
-                for piece in turn.get("pieces", []):
-                    for score in piece.get("scores", []):
-                        if score.get("expected_output"):
-                            has_expected = True
-                            break
-                    if has_expected:
-                        break
-                if has_expected:
-                    break
-
         aggregated = result.get("aggregated_metrics", {})
         turns = aggregated.get("total_turns", len(transcript))
-        final_score = aggregated.get("final_score")
-        if final_score is None:
-            if len(transcript) == 1:
-                assistant = next((p for p in transcript[0]["pieces"] if p["role"] == "assistant"), {})
-                vals = [float(s.get("score", s.get("score_value", 0))) for s in assistant.get("scores", [])]
-                final_score = max(vals, default=0.0)
-            else:
-                final_score = 0.0
 
-        score_values = []
+        # ---- Final score logic: per-turn average, then take the lowest average as final score
+        turn_averages = []
         for turn in transcript:
-            for piece in turn["pieces"]:
-                for score in piece.get("scores", []):
-                    val = score.get("score", score.get("score_value", 0))
-                    try:
-                        score_values.append(float(val))
-                    except:
-                        score_values.append(1.0 if str(val).lower() == "true" else 0.0)
+            assistant_piece = next(
+                (p for p in turn.get("pieces", []) if p.get("role", "").lower() == "assistant" and p.get("scores")), None
+            )
+            if assistant_piece and assistant_piece.get("scores"):
+                scores = [
+                    safe_float(score.get("score", score.get("score_value", 0)))
+                    for score in assistant_piece["scores"]
+                ]
+                if scores:
+                    turn_averages.append(sum(scores) / len(scores))
+        final_score = min(turn_averages) if turn_averages else 0.0
 
-        score_to_float = lambda v: 1.0 if str(v).strip().lower() in ("true", "1") else 0.0 if str(v).strip().lower() in ("false", "0") else float(v)
-        passed = all(score_to_float(s) >= threshold for s in score_values) if strict_step_failures else score_to_float(final_score) >= threshold
+        passed = final_score >= threshold
         if passed:
             passed_cases += 1
 
         badge = "pass" if passed else "fail"
         label = "Pass" if passed else "Fail"
 
-        summary = f"Test Case {idx}: <strong>Objective:</strong> {objective} | <strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | <strong>Turns:</strong> {turns}"
-        if isinstance(final_score, (int, float)):
-            summary += f" | <strong>Final Score:</strong> {final_score:.2f}"
+        summary = (
+            f"Test Case {idx}: <strong>Objective:</strong> {objective} | "
+            f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | "
+            f"<strong>Turns:</strong> {turns} | <strong>Final Score:</strong> {final_score:.2f}"
+        )
 
-        # Button-style collapsible test case entry
         html += f"<details class='testcase'><summary class='testcasesum'>{summary}</summary><table>"
 
-        if not is_chat_eval:
-            if has_expected:
-                html += "<thead><tr><th>User</th><th>Assistant</th><th>Expected Output</th><th>Score</th></tr></thead><tbody>"
-            else:
-                html += "<thead><tr><th>User</th><th>Assistant</th><th>Score</th></tr></thead><tbody>"
-        else:
-            html += "<thead><tr><th>User</th><th>Assistant</th><th>Score</th></tr></thead><tbody>"
+        html += "<thead><tr><th>User</th><th>Assistant</th><th>Scores</th></tr></thead><tbody>"
 
-        for turn in transcript:
+        for t_idx, turn in enumerate(transcript):
             user_piece = next((p for p in turn["pieces"] if p["role"] == "user"), {"converted_value": ""})
             assistant_piece = next((p for p in turn["pieces"] if p["role"] == "assistant"), {"converted_value": "", "scores": []})
 
             user_text = sanitize(user_piece["converted_value"])
             assistant_val = assistant_piece["converted_value"]
 
-            assistant_html = render_expandable_top_fields(assistant_val)
+            # Expand first assistant field by default
+            open_by_default = (t_idx == 0)
+            assistant_html = render_expandable_top_fields(assistant_val, open_by_default=open_by_default)
 
-            scores_html = ""
-            expected_html = sanitize(assistant_piece["scores"][0].get("expected_output", "")) if has_expected else None
-            for score in assistant_piece.get("scores", []):
-                val = score.get("score", score.get("score_value", None))
-                rationale = sanitize(score.get("rationale", score.get("score_rationale", "N/A")))
-                try:
-                    val = float(val)
-                except:
-                    val = True if str(val).lower() == "true" else False
-                cls = "score-pass" if (isinstance(val, (int, float)) and val >= threshold) or val is True else "score-fail"
-                if isinstance(val, bool):
-                    val_display = "✔️ True" if val else "❌ False"
-                else:
-                    val_display = f"{val:.2f}"
-                scores_html += f"<div><strong class='{cls}'>{val_display}</strong><div class='explanation'>{rationale}</div></div>"
+            # Sort scores so objective first
+            sorted_scores = sorted(
+                assistant_piece.get("scores", []),
+                key=lambda s: 0 if s.get("scorer_role") == "objective" else 1
+            )
 
-            if not is_chat_eval:
-                if has_expected:
-                    html += f"<tr><td>{user_text}</td><td>{assistant_html}</td><td>{expected_html}</td><td>{scores_html}</td></tr>"
-                else:
-                    html += f"<tr><td>{user_text}</td><td>{assistant_html}</td><td>{scores_html}</td></tr>"
+            # Wrap all scores in a single <details> to be collapsed by default
+            if sorted_scores:
+                scores_html = "<details><summary>Scorers</summary>"
+                for score in sorted_scores:
+                    val = score.get("score", score.get("score_value", None))
+                    rationale = sanitize(score.get("rationale", score.get("score_rationale", "N/A")))
+                    expected = score.get("expected_output")
+                    try:
+                        val_float = float(val)
+                    except:
+                        val_float = True if str(val).lower() == "true" else False
+                    cls = "score-pass" if (isinstance(val_float, (int, float)) and val_float >= threshold) or val_float is True else "score-fail"
+                    if isinstance(val_float, bool):
+                        val_display = "✔️ True" if val_float else "❌ False"
+                    else:
+                        val_display = f"{val_float:.2f}"
+                    scores_html += f"<div><strong class='{cls}'>{val_display}</strong>"
+                    if expected:
+                        scores_html += f"<span style='margin-left:12px;color:#9a27ad;'><b>Expected:</b> {sanitize(expected)}</span>"
+                    scores_html += f"<div class='explanation'>{rationale}</div></div>"
+                scores_html += "</details>"
             else:
-                html += f"<tr><td>{user_text}</td><td>{assistant_html}</td><td>{scores_html}</td></tr>"
+                scores_html = "<pre style='color:#999;'>(no scores)</pre>"
+
+            html += f"<tr><td>{user_text}</td><td>{assistant_html}</td><td>{scores_html}</td></tr>"
 
         html += "</tbody></table></details>"
 
     html = html.replace("{passed}", str(passed_cases)).replace("{failed}", str(total_cases - passed_cases))
     html += "</div></body></html>"
 
-    # --- Save to disk ---
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"\n✅ Report saved to: {save_path}")
     return html
+
 
 async def get_conversation_report_async(attack_result) -> dict:
     """
@@ -336,6 +331,7 @@ async def get_conversation_report_async(attack_result) -> dict:
     }
     return report
 
+
 def _build_piece_data(
         message,
         turn_index: int,
@@ -368,7 +364,8 @@ def _build_piece_data(
                 for s in raw_scores:
                     score_entry = {
                         "score": getattr(s, "score_value", None),
-                        "rationale": getattr(s, "score_rationale", None)
+                        "rationale": getattr(s, "score_rationale", None),
+                        "scorer_role": getattr(s, "scorer_role", None),
                     }
                     if hasattr(s, "expected_output") and s.expected_output:
                         score_entry["expected_output"] = s.expected_output
