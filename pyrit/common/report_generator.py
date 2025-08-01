@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Union
 import json
@@ -255,6 +256,12 @@ def create_report(
 
     html = html.replace("{passed}", str(passed_cases)).replace("{failed}", str(total_cases - passed_cases))
     html += "</div></body></html>"
+
+    # Append timestamp to the save path file name
+    if isinstance(save_path, str):
+        save_path = Path(save_path)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = save_path.with_name(f"{save_path.stem}_{timestamp}{save_path.suffix}")
 
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(html)
