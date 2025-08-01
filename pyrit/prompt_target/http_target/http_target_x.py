@@ -109,7 +109,9 @@ class HTTPTargetX(PromptTarget):
             client = self._client
             cleanup_client = False
         else:
-            client = httpx.AsyncClient(http2=http2_version, **self.httpx_client_kwargs)
+            timeout = httpx.Timeout(timeout=None, connect=60.0, read=60.0, write=60.0)
+            print("Creating new HTTP client with timeout settings:", timeout)
+            client = httpx.AsyncClient(http2=http2_version, timeout=timeout, **self.httpx_client_kwargs)
             cleanup_client = True
 
         try:

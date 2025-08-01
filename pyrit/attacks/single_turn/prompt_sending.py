@@ -284,17 +284,23 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
                 single_turn_expected_outputs.append(qa.get("expected_outcome"))
 
         if single_turn_objectives:
-            for obj, exp in zip(single_turn_objectives, single_turn_expected_outputs):
-                context = SingleTurnAttackContext(
-                    objective=obj,
-                    prepended_conversation=[],
-                    memory_labels={},
-                    expected_output=exp,
-                    conversation_id=str(uuid.uuid4())
-                )
-                # Directly await the result one by one (sequentially)
-                result = await self.execute_with_context_async(context=context)
-                results.append(result)
+            semaphore = asyncio.Semaphore(1)
+            async def single_turn_task(obj, exp):
+                async with semaphore:
+                    run_context = SingleTurnAttackContext(
+                        objective=obj,
+                        prepended_conversation=[],
+                        memory_labels={},
+                        expected_output=exp,
+                        conversation_id=str(uuid.uuid4())
+                    )
+                    return await self.execute_with_context_async(context=run_context)
+            tasks = [
+                single_turn_task(obj, exp)
+                for obj, exp in zip(single_turn_objectives, single_turn_expected_outputs)
+            ]
+            batch_results = await asyncio.gather(*tasks)
+            results.extend(batch_results)
 
         return results
 
