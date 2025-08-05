@@ -27,14 +27,16 @@ def render_expandable_top_fields(val: Any, open_by_default=False) -> str:
             except Exception:
                 pass
 
+    import json
+
     if isinstance(val, dict):
         html = ""
-        for k, v in val.items():
+        for i, (k, v) in enumerate(val.items()):
             if isinstance(v, (dict, list)):
                 val_str = json.dumps(v, ensure_ascii=False, indent=2)
             else:
                 val_str = str(v)
-            details_attr = " open" if open_by_default else ""
+            details_attr = " open" if i == 0 else ""
             html += (
                 f"<details class='expandfield'{details_attr}>"
                 f"<summary><strong>{sanitize(str(k))}</strong></summary>"
@@ -217,7 +219,7 @@ def create_report(
             assistant_val = assistant_piece["converted_value"]
 
             # Expand first assistant field by default
-            open_by_default = (t_idx == 0)
+            open_by_default = False
             assistant_html = render_expandable_top_fields(assistant_val, open_by_default=open_by_default)
 
             # Sort scores so objective first

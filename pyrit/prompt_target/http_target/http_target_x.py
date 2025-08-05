@@ -101,6 +101,7 @@ class HTTPTargetX(PromptTarget):
                 if isinstance(processed_response, dict):
                     stream_ended = processed_response.get("StreamEnded", "").strip().lower()
                     if stream_ended != "true":
+                        print("Warning: Stream did not end properly, retrying.")
                         raise RuntimeError("Stream ended unexpectedly — no STREAMING_ENDED received.")
             else:
                 processed_response = parsed_input
