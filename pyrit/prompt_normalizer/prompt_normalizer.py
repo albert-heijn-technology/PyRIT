@@ -91,7 +91,7 @@ class PromptNormalizer:
 
         response = None
 
-        max_retries = 1
+        max_retries = 3
         retry_delay = 15  # seconds
         for attempt in range(max_retries + 1):
             try:
@@ -111,14 +111,13 @@ class PromptNormalizer:
             except Exception as ex:
                 if attempt < max_retries:
                     await asyncio.sleep(retry_delay)  # Wait before retrying
-                    print("Retrying Prompt:" + str(request.request_pieces[0].original_value))
                 else:
                     self._memory.add_request_response_to_memory(request=request)
 
                     # Construct an error response with request
                     error_response = construct_response_from_request(
                         request=request.request_pieces[0],
-                        response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()[:200]}"]
+                        response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()[:1000]}"]
                     )
 
                     await self._calc_hash(request=error_response)

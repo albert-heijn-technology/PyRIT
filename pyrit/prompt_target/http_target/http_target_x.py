@@ -94,10 +94,14 @@ class HTTPTargetX(PromptTarget):
                     else:
                         parsed_input = response_text
 
-            print("HTTP Response:", parsed_input)
             # Call the parser function (should accept str or dict)
             if self.response_parser:
                 processed_response = self.response_parser(parsed_input)
+                # Check if stream ended properly
+                if isinstance(processed_response, dict):
+                    stream_ended = processed_response.get("StreamEnded", "").strip().lower()
+                    if stream_ended != "true":
+                        raise RuntimeError("Stream ended unexpectedly — no STREAMING_ENDED received.")
             else:
                 processed_response = parsed_input
 

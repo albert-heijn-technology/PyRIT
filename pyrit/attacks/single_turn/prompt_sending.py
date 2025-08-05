@@ -284,11 +284,9 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
                 single_turn_expected_outputs.append(qa.get("expected_outcome"))
 
         if single_turn_objectives:
-            semaphore = asyncio.Semaphore(1)
+            semaphore = asyncio.Semaphore(3)
 
-            async def single_turn_task(obj, exp, idx):
-                # Stagger start time: e.g. 0.3s gap between starts
-                # await asyncio.sleep(idx * 4)
+            async def single_turn_task(obj, exp):
                 async with semaphore:
                     run_context = SingleTurnAttackContext(
                         objective=obj,
@@ -300,7 +298,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
                     return await self.execute_with_context_async(context=run_context)
 
             tasks = [
-                asyncio.create_task(single_turn_task(obj, exp, idx))
+                asyncio.create_task(single_turn_task(obj, exp))
                 for idx, (obj, exp) in enumerate(zip(single_turn_objectives, single_turn_expected_outputs))
             ]
             batch_results = await asyncio.gather(*tasks)
