@@ -45,7 +45,8 @@ def get_http_regex_stream_callback_function(pattern: str) -> Callable:
     return extract_text_messages
 
 
-
+def _fetch_key(data: dict, key: str):
+    """
     Returns:
         str: The fetched value.
     """
