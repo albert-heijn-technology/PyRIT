@@ -290,7 +290,6 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             semaphore = asyncio.Semaphore(3)
 
             async def single_turn_task(obj, exp, idx):
-                await asyncio.sleep(idx * 4)
                 async with semaphore:
                     run_context = SingleTurnAttackContext(
                         objective=obj,

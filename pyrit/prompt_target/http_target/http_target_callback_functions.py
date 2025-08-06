@@ -31,16 +31,20 @@ def get_http_regex_stream_callback_function(pattern: str) -> Callable:
             for line in match.splitlines():
                 if line.startswith("data:"):
                     content = line[5:].strip()
+                    # Skip empty or undesired data
+                    if not content:
+                        continue
                     if content.lower() in {"true", "false", "null"}:
                         continue
                     if content.startswith("{"):
                         continue
                     fragments.append(content)
 
+        # Join cleanly without introducing double spaces
         sentence = " ".join(fragments)
-        sentence = re.sub(r"\b([A-Z])\s+([a-z]+)", r"\1\2", sentence)
         sentence = re.sub(r"\s+([.,!?])", r"\1", sentence)
-        return sentence
+        sentence = re.sub(r"\b([A-Z])\s+([a-z])", r"\1\2", sentence)
+        return sentence.strip()
 
     return extract_text_messages
 
