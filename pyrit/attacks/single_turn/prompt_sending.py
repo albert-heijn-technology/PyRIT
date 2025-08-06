@@ -138,9 +138,11 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
 
         # Process prepended conversation if provided
         await self._conversation_manager.update_conversation_state_async(
+            target=self._objective_target,
             conversation_id=context.conversation_id,
             prepended_conversation=context.prepended_conversation,
-            converter_configurations=self._request_converters,
+            request_converters=self._request_converters,
+            response_converters=self._response_converters,
         )
 
     async def _perform_attack_async(self, *, context: SingleTurnAttackContext) -> AttackResult:
@@ -154,7 +156,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             AttackResult containing the outcome of the attack.
         """
         # Log the attack configuration
-        self._logger.info(f"Starting prompt injection attack with objective: {context.objective}")
+        self._logger.info(f"Starting {self.__class__.__name__} with objective: {context.objective}")
         self._logger.info(f"Max attempts: {self._max_attempts_on_failure}")
 
         # Attack execution steps:
@@ -190,6 +192,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
             attack_identifier=self.get_identifier(),
             last_response=response.get_piece() if response else None,
             last_score=score,
+            related_conversations=context.related_conversations,
             outcome=outcome,
             outcome_reason=outcome_reason,
             executed_turns=1,
