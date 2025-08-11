@@ -91,8 +91,8 @@ class PromptNormalizer:
 
         response = None
 
-        max_retries = 3
-        retry_delay = 15  # seconds
+        max_retries = 5
+        retry_delay = 4  # seconds
         for attempt in range(max_retries + 1):
             try:
                 response = await target.send_prompt_async(prompt_request=request)

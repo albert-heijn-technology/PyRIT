@@ -287,7 +287,7 @@ class PromptSendingAttack(AttackStrategy[SingleTurnAttackContext, AttackResult])
                 single_turn_expected_outputs.append(qa.get("expected_outcome"))
 
         if single_turn_objectives:
-            semaphore = asyncio.Semaphore(3)
+            semaphore = asyncio.Semaphore(1)
 
             async def single_turn_task(obj, exp, idx):
                 async with semaphore:

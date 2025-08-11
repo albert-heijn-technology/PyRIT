@@ -94,6 +94,8 @@ class HTTPTargetX(PromptTarget):
                     else:
                         parsed_input = response_text
 
+            print("Response received:", parsed_input)
+
             # Call the parser function (should accept str or dict)
             if self.response_parser:
                 processed_response = self.response_parser(parsed_input)
