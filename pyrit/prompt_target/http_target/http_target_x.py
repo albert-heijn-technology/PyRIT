@@ -155,7 +155,6 @@ class HTTPTargetX(PromptTarget):
         return headers_dict, body, full_url, http_method, http_version
 
     def _infer_full_url_from_host(self, path: str, headers_dict: Dict[str, str]) -> str:
-        path = path.lower()
         if path.startswith(("http://", "https://")):
             return path
         http_protocol = "https://"
