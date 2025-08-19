@@ -5,11 +5,7 @@ import json
 import re
 from typing import Callable, List, Any
 
-def get_http_target_json_response_callback_function(key: str) -> Callable:
-    def parse_json_http_response(response: str):
-        json_response = json.loads(response)
-        return _fetch_key(json_response, key)
-    return parse_json_http_response
+import requests
 
 
 def get_http_target_json_response_callback_function(key: str) -> Callable:
@@ -37,13 +33,6 @@ def get_http_target_json_response_callback_function(key: str) -> Callable:
         json_response = json.loads(response.content)
         data_key = _fetch_key(data=json_response, key=key)
         return data_key
-
-def get_http_regex_stream_callback_function(pattern: str) -> Callable:
-    compiled = re.compile(pattern + r"\s+data:(.*)", re.MULTILINE)
-
-    def extract_text_messages(response: str) -> str:
-        matches = compiled.findall(response)
-        return "".join(m.rstrip("\r\n") for m in matches if m != "")
 
 def get_http_target_regex_matching_callback_function(key: str, url: str = None) -> Callable:
     def parse_using_regex(response: requests.Response):
@@ -90,16 +79,71 @@ def _fetch_key(data: dict, key: str):
             return ""
     return data
 
-def get_http_regex_stream_callback_function(pattern: str) -> Callable:
-    compiled = re.compile(pattern + r"\s+data:(.*)", re.MULTILINE)
+def get_http_regex_stream_callback_function(event_marker: str) -> Callable:
+    """
+    event_marker: e.g. 'event:TEXT_MESSAGE'
+    Concatenate payloads exactly as sent. We trust the stream to deliver spaces/newlines explicitly.
+    """
+    event_marker = event_marker.strip()
 
     def extract_text_messages(response: str) -> str:
-        matches = compiled.findall(response)
-        return "".join(m.rstrip("\r\n") for m in matches if m != "")
+        if not isinstance(response, str):
+            response = str(response)
+
+        lines = response.splitlines()
+        in_text_event = False
+        chunks: List[str] = []
+
+        # collapse multiple blank data: lines into a single newline
+        blank_streak = 0
+
+        def append_payload(payload: str):
+            nonlocal blank_streak
+            # Right-strip only line terminators; keep leading spaces intact
+            chunk = payload.rstrip("\r\n")
+
+            if chunk == "":
+                blank_streak += 1
+                # convert first blank in a streak to a single newline
+                if blank_streak == 1:
+                    chunks.append("\n")
+                return
+            else:
+                blank_streak = 0
+                chunks.append(chunk)
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            if line.startswith("event:"):
+                in_text_event = (line.strip() == event_marker)
+                i += 1
+                continue
+
+            if in_text_event:
+                if line.startswith("data:"):
+                    payload = line[len("data:"):]  # keep leading space if present
+                    append_payload(payload)
+                    i += 1
+                    continue
+                else:
+                    # end of this event block
+                    in_text_event = False
+                    # don't consume this line; outer loop will handle it
+                    continue
+
+            i += 1
+
+        # Join verbatim. Do NOT auto-insert spaces; the stream already includes them when needed.
+        out = "".join(chunks)
+
+        # Optional: de-dup excessive blank lines
+        out = re.sub(r"\n{3,}", "\n\n", out)
+
+        return out.strip("\n")
 
     return extract_text_messages
-
-
 
 class MultiFieldResponseParser:
     def __init__(self, field_definitions: List[dict]):
