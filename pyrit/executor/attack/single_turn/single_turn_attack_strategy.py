@@ -34,6 +34,9 @@ class SingleTurnAttackContext(AttackContext):
     # Arbitrary metadata that downstream orchestrators or scorers may attach
     metadata: Optional[dict[str, Union[str, int]]] = None
 
+    # Expected output for the attack, if any
+    expected_output: Optional[str] = None
+
 
 class SingleTurnAttackStrategy(AttackStrategy[SingleTurnAttackContext, AttackResult], ABC):
     """

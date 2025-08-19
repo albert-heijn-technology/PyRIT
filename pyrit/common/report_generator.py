@@ -365,8 +365,8 @@ def _build_piece_data(
         }
 
         if is_assistant and piece.role.lower() == "assistant":
-            raw_scores = memory.get_scores_by_prompt_ids(
-                prompt_request_response_ids=[str(piece.id)]
+            raw_scores = memory.get_prompt_scores(
+                prompt_ids=[str(piece.id)]
             )
             if raw_scores:
                 piece_scores: List[Dict] = []

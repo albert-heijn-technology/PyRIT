@@ -27,6 +27,7 @@ from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
     MultiTurnAttackContext,
     MultiTurnAttackStrategy,
 )
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -578,7 +579,7 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             return None
 
         if self._evaluate_chat:
-            prompt_request_responses = self._memory.get_conversation(conversation_id=response_piece.conversation_id)
+            prompt_request_responses = CentralMemory.get_memory_instance().get_conversation(conversation_id=response_piece.conversation_id)
             if not prompt_request_responses:
                 return None
 

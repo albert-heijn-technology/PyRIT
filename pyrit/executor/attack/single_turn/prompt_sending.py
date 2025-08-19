@@ -223,7 +223,8 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
     async def perform_dataset_attack(
             self,
             qa_pairs: List[Dict[str, Any]],
-            thread_id_injector: Optional[Callable[[str, str], str]] = None
+            thread_id_injector: Optional[Callable[[str, str], str]] = None,
+            thread_count: int = 3
     ) -> Any:
         """
         Executes a batch of QA pairs (multi-turn or single-turn).
@@ -286,7 +287,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 single_turn_expected_outputs.append(qa.get("expected_outcome"))
 
         if single_turn_objectives:
-            semaphore = asyncio.Semaphore(1)
+            semaphore = asyncio.Semaphore(thread_count)
 
             async def single_turn_task(obj, exp, idx):
                 async with semaphore:

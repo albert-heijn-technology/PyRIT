@@ -59,6 +59,7 @@ class HTTPTargetX(PromptTarget):
             client = aiohttp.ClientSession(**self.client_kwargs)
             cleanup_client = True
 
+        print("Reqest raw:", http_request_w_prompt)
         try:
             # If body is JSON/dict, send as json, else as data.
             if isinstance(http_body, dict):
