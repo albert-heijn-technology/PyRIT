@@ -127,11 +127,12 @@ class PromptMemoryEntry(Base):
 
     original_prompt_id = mapped_column(CustomUUID, nullable=False)
 
-    scores: Mapped[List["ScoreEntry"]] = relationship(
+    scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
         back_populates="prompt_request_piece",
-        foreign_keys="ScoreEntry.prompt_request_response_id",
+        cascade="all, delete-orphan",
+        single_parent=True,     # required for delete-orphan on parent side
+        lazy="selectin",        # efficient eager loading
     )
 
     def __init__(self, *, entry: PromptRequestPiece):
@@ -227,7 +228,7 @@ class ScoreEntry(Base):  # type: ignore
     score_rationale = mapped_column(String, nullable=True)
     score_metadata = mapped_column(String, nullable=True)
     scorer_class_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    prompt_request_response_id = mapped_column(Uuid(as_uuid=True), ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=False)
     expected_output = mapped_column(String, nullable=True)
     scorer_role = mapped_column(String, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
