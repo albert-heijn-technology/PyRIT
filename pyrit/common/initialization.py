@@ -67,10 +67,8 @@ def initialize_pyrit(memory_db_type: Union[MemoryDatabaseType, str], **memory_in
 
     _load_environment_files()
 
-    memory: MemoryInterface = None
+    memory: MemoryInterface
 
-    memory: MemoryInterface = None
-    DuckDBMemory._instances.clear()
     if memory_db_type == IN_MEMORY:
         logger.info("Using in-memory SQLite database.")
         memory = SQLiteMemory(db_path=":memory:", **memory_instance_kwargs)
