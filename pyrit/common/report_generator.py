@@ -233,15 +233,6 @@ async def get_conversation_report_async(attack_result) -> dict:
     memory = CentralMemory.get_memory_instance()
 
     with closing(memory.get_session()) as session:
-        # DEBUG: list all score entries for this conversation
-        score_rows = session.query(ScoreEntry).all()
-        for s in score_rows:
-            print(
-                f"[DEBUG] ScoreEntry id={s.id}, "
-                f"prompt_request_response_id={s.prompt_request_response_id}, "
-                f"score={s.score_value}"
-            )
-
         entries = (
             session.query(PromptMemoryEntry)
             .options(joinedload(PromptMemoryEntry.scores))
@@ -318,12 +309,6 @@ def _entry_to_piece(entry, is_assistant: bool) -> dict:
     }
 
     if is_assistant:
-        print(
-            f"[DEBUG] Assistant entry id={entry.id}, "
-            f"original_prompt_id={entry.original_prompt_id}, "
-            f"scores_found={len(entry.scores)}"
-        )
-
         if entry.scores:
             piece["scores"] = []
             for s in entry.scores:
