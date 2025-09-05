@@ -59,7 +59,6 @@ class HTTPTargetX(PromptTarget):
             client = aiohttp.ClientSession(**self.client_kwargs)
             cleanup_client = True
 
-        print("Reqest raw:", http_request_w_prompt)
         try:
             # If body is JSON/dict, send as json, else as data.
             if isinstance(http_body, dict):
@@ -94,8 +93,6 @@ class HTTPTargetX(PromptTarget):
                             parsed_input = json.loads(response_text)
                     else:
                         parsed_input = response_text
-
-            print("Response received:", parsed_input)
 
             # Call the parser function (should accept str or dict)
             if self.response_parser:
