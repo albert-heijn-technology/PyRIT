@@ -28,15 +28,19 @@ Notes:
 - The runner imports `pyrit`, so both must be installed in the same environment.
 - Prefer pinning to a tag or commit for reproducible CI.
 
-## Required environment variables
+## Auth settings
 
-- `TARGET_ENDPOINT`: Base URL injected into the raw HTTP request template (e.g., `https://your.service`)
-- `AUTH_TOKEN`: Token injected into the raw HTTP request template
-- `OPENAI_API_KEY`: API key for the evaluator. Mapped to `OPENAI_CHAT_KEY` internally.
+You can supply credentials and endpoints via CLI flags or environment variables.
 
-Optional evaluator env vars (defaults applied if missing):
-- `OPENAI_CHAT_ENDPOINT` (defaults to `https://api.openai.com/v1` if missing)
-- `OPENAI_CHAT_MODEL` (defaults to `gpt-4o-mini` if missing)
+CLI flags (preferred in CI):
+- `--target-endpoint` (overrides `TARGET_ENDPOINT`)
+- `--auth-token` (overrides `AUTH_TOKEN`)
+- `--openai-api-key` (overrides `OPENAI_API_KEY` / `OPENAI_CHAT_KEY`)
+- `--openai-chat-endpoint` (overrides `OPENAI_CHAT_ENDPOINT`; default `https://api.openai.com/v1`)
+- `--openai-chat-model` (overrides `OPENAI_CHAT_MODEL`; default `gpt-4o-mini`)
+
+Environment variables (fallbacks):
+- `TARGET_ENDPOINT`, `AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_MODEL`
 
 Optional path overrides via env:
 - `PYRIT_DATASET_PATH` and `PYRIT_EVALUATOR_PATH` override YAML paths
@@ -47,7 +51,12 @@ Optional path overrides via env:
 pyrit-eval run \
   --config path/to/config.yaml \
   [--out pyrit_reports] \
-  
+  [--target-endpoint https://your.api] \
+  [--auth-token YOUR_TOKEN] \
+  [--openai-api-key sk-...] \
+  [--openai-chat-endpoint https://api.openai.com/v1] \
+  [--openai-chat-model gpt-4o-mini]
+
 Notes:
 - All relative paths are resolved relative to the config file’s directory.
 - `--threshold` gates by minimum float score across a conversation. Missing scores fail.
@@ -90,16 +99,13 @@ jobs:
           pip install "pyrit-eval-runner @ git+https://github.com/<org>/<repo-a>.git@v0.1.0#subdirectory=pyrit-eval-runner"
 
       - name: Run evaluation
-        env:
-          TARGET_ENDPOINT: ${{ secrets.TARGET_ENDPOINT }}
-          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional:
-          # OPENAI_CHAT_ENDPOINT: https://api.openai.com/v1
-          # OPENAI_CHAT_MODEL: gpt-4o-mini
-          # PYRIT_SCORER_TYPE: float_scale  # or true_false
         run: |
-          pyrit-eval run --config repo-b/dataset_config.yaml --out pyrit_reports 
+          pyrit-eval run \
+            --config repo-b/dataset_config.yaml \
+            --out pyrit_reports \
+            --target-endpoint "${{ secrets.TARGET_ENDPOINT }}" \
+            --auth-token "${{ secrets.AUTH_TOKEN }}" \
+            --openai-api-key "${{ secrets.OPENAI_API_KEY }}"
 
       - name: Upload reports
         uses: actions/upload-artifact@v4
