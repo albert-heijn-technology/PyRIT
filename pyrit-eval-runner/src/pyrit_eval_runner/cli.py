@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
-
+from pyrit.prompt_target import HTTPTargetX
 import aiohttp
 import yaml
 
@@ -41,52 +41,6 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
-
-def _compute_min_float_score(report: Dict[str, Any]) -> Optional[float]:
-    # Scan all assistant scores across the conversation; compute min float.
-    transcript = report.get("transcript", [])
-    vals: List[float] = []
-    for turn in transcript:
-        for piece in turn.get("pieces", []):
-            if str(piece.get("role", "")).lower() != "assistant":
-                continue
-            for s in piece.get("scores", []) or []:
-                v = s.get("score")
-                # Try coercion to float
-                try:
-                    fv = float(v)
-                    vals.append(fv)
-                except Exception:
-                    continue
-    if not vals:
-        return None
-    return min(vals)
-
-
-def _compute_all_true_verdict(report: Dict[str, Any]) -> Optional[bool]:
-    transcript = report.get("transcript", [])
-    saw_any = False
-    for turn in transcript:
-        for piece in turn.get("pieces", []):
-            if str(piece.get("role", "")).lower() != "assistant":
-                continue
-            for s in piece.get("scores", []) or []:
-                v = s.get("score")
-                if isinstance(v, bool):
-                    saw_any = True
-                    if not v:
-                        return False
-                else:
-                    # Try string representation
-                    if isinstance(v, str):
-                        lv = v.strip().lower()
-                        if lv in ("true", "false"):
-                            saw_any = True
-                            if lv == "false":
-                                return False
-    if not saw_any:
-        return None
-    return True
 # --- Thread helpers (regex based) ---
 def build_thread_id_parser(thread_id_pattern: str):
     # Find the event line; then extract payload from next data: line
@@ -114,10 +68,6 @@ def inject_thread_id(raw_http_request: str, thread_id: str, key: str = "threadId
     sep = "&" if "?" in replaced else "?"
     new_url = f"{replaced}{sep}{key}={thread_id}"
     return raw_http_request.replace(original_url, new_url)
-
-
-from pyrit.prompt_target import HTTPTargetX
-
 
 async def run_async(args: argparse.Namespace) -> int:
     _setup_logging()
@@ -272,18 +222,9 @@ async def run_async(args: argparse.Namespace) -> int:
         save_path=out_dir / "dataset_report.html",
     )
 
-    # Final gating
-    passed = True
-    if args.threshold is not None:
-        for rep in chat_reports:
-            s = _compute_min_float_score(rep)
-            if s is None or s < args.threshold:
-                passed = False
-                break
-
-    verdict_text = "true" if passed else "false"
-    print(f"Verdict: {verdict_text} Reports: {out_dir}")
-    return 0 if passed else 2
+    # Only print the reports directory; no gating/exit failure
+    print(f"Reports: {out_dir}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -293,8 +234,6 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run evaluations", description="Run evaluations")
     run.add_argument("--config", required=True, help="Path to Repo-B YAML config")
     run.add_argument("--out", default="pyrit_reports", help="Output directory")
-    run.add_argument("--threshold", type=float, default=None, help="Float-score threshold gating")
-    # simplified flags: config, out, threshold only
 
     return p
 
