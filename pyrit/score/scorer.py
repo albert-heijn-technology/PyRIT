@@ -9,7 +9,8 @@ import json
 import logging
 import uuid
 from abc import abstractmethod
-from typing import Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Union
 
 from pyrit.exceptions import (
     InvalidJsonException,
@@ -44,6 +45,42 @@ class Scorer(abc.ABC):
     @property
     def _memory(self) -> MemoryInterface:
         return CentralMemory.get_memory_instance()
+
+    def _verify_and_resolve_path(self, path: Union[str, Path]) -> Path:
+        """
+        Verify that a path passed to a Scorer on its creation
+        is valid before beginning the scoring logic.
+
+        Args:
+            path (Union[str, Path]): A pathlike argument passed to the Scorer.
+
+        Returns:
+            Path: The resolved Path object.
+        """
+        if not isinstance(path, (str, Path)):
+            raise ValueError(f"Path must be a string or Path object. Got type(path): {type(path).__name__}")
+
+        path_obj: Path = Path(path).resolve() if isinstance(path, str) else path.resolve()
+        if not path_obj.exists():
+            raise ValueError(f"Path not found: {str(path_obj)}")
+        return path_obj
+
+    async def score_async(self, request_response: PromptRequestPiece, *, task: Optional[str] = None) -> list[Score]:
+        """
+        Score the request_response, add the results to the database
+        and return a list of Score objects.
+
+        Args:
+            request_response (PromptRequestPiece): The request response to be scored.
+            task (str): The task based on which the text should be scored (the original attacker model's objective).
+
+        Returns:
+            list[Score]: A list of Score objects representing the results.
+        """
+        self.validate(request_response, task=task)
+        scores = await self._score_async(request_response, task=task)
+        self._memory.add_scores_to_memory(scores=scores)
+        return scores
 
     @abstractmethod
     async def _score_async(self, request_response: PromptRequestPiece, *, task: Optional[str] = None) -> list[Score]:

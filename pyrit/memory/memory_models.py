@@ -55,7 +55,9 @@ class CustomUUID(TypeDecorator):
         return str(value) if value else None
 
     def process_result_value(self, value, dialect):
-        return uuid.UUID(value) if value else None
+        if dialect.name == "sqlite":
+            return uuid.UUID(value) if value else None
+        return value
 
 
 class Base(DeclarativeBase):
@@ -100,7 +102,7 @@ class PromptMemoryEntry(Base):
     __tablename__ = "PromptMemoryEntries"
     __table_args__ = {"extend_existing": True}
     id = mapped_column(CustomUUID, nullable=False, primary_key=True)
-    role: Mapped[Literal["system", "user", "assistant"]] = mapped_column(String, nullable=False)
+    role: Mapped[Literal["system", "user", "assistant", "tool", "developer"]] = mapped_column(String, nullable=False)
     conversation_id = mapped_column(String, nullable=False)
     sequence = mapped_column(INTEGER, nullable=False)
     timestamp = mapped_column(DateTime, nullable=False)
