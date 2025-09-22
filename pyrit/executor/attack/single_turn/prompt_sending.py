@@ -389,6 +389,12 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 the request was filtered, blocked, or encountered an error.
         """
 
+        self._logger.debug(
+            "Sending prompt with conversation_id=%s for objective='%s'",
+            context.conversation_id,
+            context.objective,
+        )
+
         return await self._prompt_normalizer.send_prompt_async(
             seed_prompt_group=prompt_group,
             target=self._objective_target,
