@@ -239,75 +239,80 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         """
         single_turn_objectives = []
         single_turn_expected_outputs = []
+        had_http_request_attr = hasattr(self._objective_target, "http_request")
         start_request_copy = getattr(self._objective_target, "http_request", None)
         results = []
 
-        for i, qa in enumerate(qa_pairs):
-            if start_request_copy is not None:
+        try:
+            for i, qa in enumerate(qa_pairs):
+                if had_http_request_attr:
+                    self._objective_target.http_request = start_request_copy
+
+                if "conversation" in qa:
+                    conversation_id = str(uuid.uuid4())
+                    is_thread_id_set = False
+
+                    for idx, turn in enumerate(qa["conversation"]):
+                        prompt_text = turn["question"]
+                        expected_output = turn.get("expected_outcome")
+
+                        context = SingleTurnAttackContext(
+                            objective=prompt_text,
+                            prepended_conversation=[],
+                            memory_labels={},
+                            conversation_id=conversation_id,
+                            expected_output=expected_output,
+                        )
+                        result = await self.execute_with_context_async(context=context)
+                        prompt_response = result.last_response if result else None
+
+                        # Inject thread ID once if present in first assistant response
+                        if idx == 0 and not is_thread_id_set and thread_id_injector:
+                            if prompt_response:
+                                thread_id = getattr(prompt_response, "prompt_metadata", {}).get("thread_id")
+                                if thread_id and hasattr(self._objective_target, "http_request"):
+                                    self._objective_target.http_request = thread_id_injector(
+                                        self._objective_target.http_request, thread_id
+                                    )
+                                    is_thread_id_set = True
+                            else:
+                                print("Thread ID not found in first turn's response. Aborting this conversation.")
+                                break
+
+                        # We only need one result per conversation, after last turn (if thread set)
+                        if idx == len(qa["conversation"]) - 1 and is_thread_id_set:
+                            results.append(result)
+                        await asyncio.sleep(1)
+                else:
+                    # Single-turn QA
+                    single_turn_objectives.append(qa["question"])
+                    single_turn_expected_outputs.append(qa.get("expected_outcome"))
+
+            if single_turn_objectives:
+                semaphore = asyncio.Semaphore(thread_count)
+
+                async def single_turn_task(obj, exp, idx):
+                    async with semaphore:
+                        run_context = SingleTurnAttackContext(
+                            objective=obj,
+                            prepended_conversation=[],
+                            memory_labels={},
+                            expected_output=exp,
+                            conversation_id=str(uuid.uuid4())
+                        )
+                        return await self.execute_with_context_async(context=run_context)
+
+                tasks = [
+                    asyncio.create_task(single_turn_task(obj, exp, idx))
+                    for idx, (obj, exp) in enumerate(zip(single_turn_objectives, single_turn_expected_outputs))
+                ]
+                batch_results = await asyncio.gather(*tasks)
+                results.extend(batch_results)
+
+            return results
+        finally:
+            if had_http_request_attr:
                 self._objective_target.http_request = start_request_copy
-
-            if "conversation" in qa:
-                conversation_id = str(uuid.uuid4())
-                is_thread_id_set = False
-
-                for idx, turn in enumerate(qa["conversation"]):
-                    prompt_text = turn["question"]
-                    expected_output = turn.get("expected_outcome")
-
-                    context = SingleTurnAttackContext(
-                        objective=prompt_text,
-                        prepended_conversation=[],
-                        memory_labels={},
-                        conversation_id=conversation_id,
-                        expected_output=expected_output,
-                    )
-                    result = await self.execute_with_context_async(context=context)
-                    prompt_response = result.last_response if result else None
-
-                    # Inject thread ID once if present in first assistant response
-                    if idx == 0 and not is_thread_id_set and thread_id_injector:
-                        if prompt_response:
-                            thread_id = getattr(prompt_response, "prompt_metadata", {}).get("thread_id")
-                            if thread_id and hasattr(self._objective_target, "http_request"):
-                                self._objective_target.http_request = thread_id_injector(
-                                    self._objective_target.http_request, thread_id
-                                )
-                                is_thread_id_set = True
-                        else:
-                            print("Thread ID not found in first turn's response. Aborting this conversation.")
-                            break
-
-                    # We only need one result per conversation, after last turn (if thread set)
-                    if idx == len(qa["conversation"]) - 1 and is_thread_id_set:
-                        results.append(result)
-                    await asyncio.sleep(1)
-            else:
-                # Single-turn QA
-                single_turn_objectives.append(qa["question"])
-                single_turn_expected_outputs.append(qa.get("expected_outcome"))
-
-        if single_turn_objectives:
-            semaphore = asyncio.Semaphore(thread_count)
-
-            async def single_turn_task(obj, exp, idx):
-                async with semaphore:
-                    run_context = SingleTurnAttackContext(
-                        objective=obj,
-                        prepended_conversation=[],
-                        memory_labels={},
-                        expected_output=exp,
-                        conversation_id=str(uuid.uuid4())
-                    )
-                    return await self.execute_with_context_async(context=run_context)
-
-            tasks = [
-                asyncio.create_task(single_turn_task(obj, exp, idx))
-                for idx, (obj, exp) in enumerate(zip(single_turn_objectives, single_turn_expected_outputs))
-            ]
-            batch_results = await asyncio.gather(*tasks)
-            results.extend(batch_results)
-
-        return results
 
     def _determine_attack_outcome(
             self, *, response: Optional[PromptRequestResponse], score: Optional[Score], context: SingleTurnAttackContext
