@@ -134,11 +134,10 @@ def create_report(
             return float(val)
         except Exception:
             return 1.0 if str(val).lower() == "true" else 0.0
+    processed_results: List[Dict[str, Any]] = []
 
     for idx, result in enumerate(results, start=1):
         objective = _get_attr_or_key(result, "objective") or _get_attr_or_key(result, "prompt") or "N/A"
-        objective = sanitize(objective)
-
         transcript = _get_attr_or_key(result, "transcript") or []
         aggregated = result.get("aggregated_metrics", {})
         turns = aggregated.get("total_turns", len(transcript))
@@ -159,19 +158,31 @@ def create_report(
         if passed:
             passed_cases += 1
 
-        badge = "pass" if passed else "fail"
-        label = "Pass" if passed else "Fail"
+        processed_results.append({
+            "objective": sanitize(objective),
+            "transcript": transcript,
+            "turns": turns,
+            "final_score": final_score,
+            "passed": passed,
+            "original_index": idx,
+        })
+
+    processed_results.sort(key=lambda item: (item["passed"], item["original_index"]))
+
+    for result_data in processed_results:
+        badge = "pass" if result_data["passed"] else "fail"
+        label = "Pass" if result_data["passed"] else "Fail"
 
         summary = (
-            f"Test Case {idx}: <strong>Objective:</strong> {objective} | "
+            f"Test Case {result_data['original_index']}: <strong>Objective:</strong> {result_data['objective']} | "
             f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | "
-            f"<strong>Turns:</strong> {turns} | <strong>Final Score:</strong> {final_score:.2f}"
+            f"<strong>Turns:</strong> {result_data['turns']} | <strong>Final Score:</strong> {result_data['final_score']:.2f}"
         )
 
         html += f"<details class='testcase'><summary class='testcasesum'>{summary}</summary><table>"
         html += "<thead><tr><th>User</th><th>Assistant</th><th>Scores</th></tr></thead><tbody>"
 
-        for turn in transcript:
+        for turn in result_data["transcript"]:
             user_piece = next((p for p in turn["pieces"] if p["role"] == "user"), {"converted_value": ""})
             assistant_piece = next((p for p in turn["pieces"] if p["role"] == "assistant"), {"converted_value": "", "scores": []})
 
@@ -324,7 +335,6 @@ def _entry_to_piece(entry, is_assistant: bool) -> dict:
                 })
 
     return piece
-
 
 
 
