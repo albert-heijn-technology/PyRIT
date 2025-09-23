@@ -37,6 +37,38 @@ def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[Path]:
     return p
 
 
+def _split_path_list(value: str) -> List[str]:
+    return [item.strip() for item in value.split(os.pathsep) if item.strip()]
+
+
+def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[str]:
+    env_multi = os.getenv("PYRIT_EVALUATOR_PATHS")
+    if env_multi:
+        parts = _split_path_list(env_multi)
+        if parts:
+            return parts
+        raise ValueError("PYRIT_EVALUATOR_PATHS is set but empty")
+
+    env_single = os.getenv("PYRIT_EVALUATOR_PATH")
+    if env_single:
+        return [env_single]
+
+    cfg_multi = cfg.get("evaluator_paths")
+    if cfg_multi is not None:
+        if not isinstance(cfg_multi, Sequence) or isinstance(cfg_multi, (str, bytes)):
+            raise ValueError("Config key 'evaluator_paths' must be a list of paths")
+        parts = [str(item).strip() for item in cfg_multi if str(item).strip()]
+        if not parts:
+            raise ValueError("Config key 'evaluator_paths' must contain at least one path")
+        return parts
+
+    cfg_single = cfg.get("evaluator_path")
+    if cfg_single:
+        return [str(cfg_single)]
+
+    return []
+
+
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -90,16 +122,27 @@ async def run_async(args: argparse.Namespace) -> int:
 
     # Resolve paths with overrides (flag > env > yaml)
     dataset_path = os.getenv("PYRIT_DATASET_PATH") or cfg.get("dataset_path")
-    evaluator_path = os.getenv("PYRIT_EVALUATOR_PATH") or cfg.get("evaluator_path")
-    if not dataset_path or not evaluator_path:
-        _fail("Config must include dataset_path and evaluator_path (or override via flags/env)")
+    if not dataset_path:
+        _fail("Config must include dataset_path (or override via flags/env)")
+
+    try:
+        evaluator_paths = _collect_evaluator_paths(cfg)
+    except ValueError as exc:
+        _fail(str(exc))
+
+    if not evaluator_paths:
+        _fail("Config must include evaluator_path or evaluator_paths (or override via env)")
 
     dataset_path_p = _resolve_path(cfg_dir, dataset_path)
-    evaluator_path_p = _resolve_path(cfg_dir, evaluator_path)
     if not dataset_path_p or not dataset_path_p.exists():
         _fail(f"Dataset file not found: {dataset_path_p}")
-    if not evaluator_path_p or not evaluator_path_p.exists():
-        _fail(f"Evaluator file not found: {evaluator_path_p}")
+
+    evaluator_paths_p: List[Path] = []
+    for evaluator_path in evaluator_paths:
+        resolved_path = _resolve_path(cfg_dir, evaluator_path)
+        if not resolved_path or not resolved_path.exists():
+            _fail(f"Evaluator file not found: {resolved_path}")
+        evaluator_paths_p.append(resolved_path)
 
     http_raw = cfg.get("http_request_raw")
     field_defs = cfg.get("field_defs")
@@ -146,11 +189,18 @@ async def run_async(args: argparse.Namespace) -> int:
 
     from pyrit.prompt_target import OpenAIChatTarget
     from pyrit.score import Evaluator
-    evaluator = Evaluator(
-        chat_target=OpenAIChatTarget(),
-        evaluator_yaml_path=evaluator_path_p,
-        scorer_type=scorer_type,  # type: ignore[arg-type]
-    )
+    evaluators: List[Any] = []
+    for path in evaluator_paths_p:
+        evaluators.append(
+            Evaluator(
+                chat_target=OpenAIChatTarget(),
+                evaluator_yaml_path=path,
+                scorer_type=scorer_type,  # type: ignore[arg-type]
+            )
+        )
+
+    objective_evaluator = evaluators[0]
+    auxiliary_evaluators = evaluators[1:]
 
     from pyrit.executor.attack import (
         PromptSendingAttack,
@@ -161,7 +211,10 @@ async def run_async(args: argparse.Namespace) -> int:
     attack = PromptSendingAttack(
         objective_target=http_target,
         attack_converter_config=AttackConverterConfig(request_converters=[], response_converters=[]),
-        attack_scoring_config=AttackScoringConfig(objective_scorer=evaluator, auxiliary_scorers=[]),
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=objective_evaluator,
+            auxiliary_scorers=auxiliary_evaluators,
+        ),
         max_attempts_on_failure=0,
     )
 

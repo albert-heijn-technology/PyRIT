@@ -43,7 +43,9 @@ Environment variables (fallbacks):
 - `TARGET_ENDPOINT`, `AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_MODEL`
 
 Optional path overrides via env:
-- `PYRIT_DATASET_PATH` and `PYRIT_EVALUATOR_PATH` override YAML paths
+- `PYRIT_DATASET_PATH` overrides the dataset path
+- `PYRIT_EVALUATOR_PATHS` (pathsep-delimited) overrides the list of evaluator YAMLs
+- `PYRIT_EVALUATOR_PATH` overrides a single evaluator path
 - `PYRIT_SCORER_TYPE` selects scorer type (`float_scale` [default] or `true_false`)
 
 ## CLI
@@ -65,7 +67,7 @@ Notes:
 
 Required keys:
 - `dataset_path`: YAML dataset with single or multi-turn test cases
-- `evaluator_path`: YAML for the Evaluator
+- Either `evaluator_path` (single scorer) or `evaluator_paths` (list of scorer YAMLs; the first is the objective scorer, the remainder become auxiliary scorers)
 - `http_request_raw`: Raw HTTP request template containing `{{PROMPT}}`, and placeholders `{base_url}` and `{token}`
 - `field_defs`: Parser fields for `MultiFieldResponseParser` (e.g., json/regex/stream)
 - `thread_id_pattern`: SSE event marker to locate thread creation
