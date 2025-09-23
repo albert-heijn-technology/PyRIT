@@ -124,9 +124,12 @@ class Evaluator(Scorer):
             additional_evaluator_variables=self._additional_evaluator_variables,
         )
 
-        score = unvalidated_score.to_score(score_value=unvalidated_score.raw_score_value, expected_output=request_response.expected_output, scorer_role=self.scorer_role)
+        score = unvalidated_score.to_score(
+            score_value=unvalidated_score.raw_score_value,
+            expected_output=request_response.expected_output,
+            scorer_role=self.scorer_role,
+        )
 
-        self._memory.add_scores_to_memory(scores=[score])
         return [score]
 
 

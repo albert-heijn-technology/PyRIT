@@ -33,7 +33,4 @@ class SimpleTextLengthScorer(Scorer):
             scorer_role=self.scorer_role
         )
 
-        # Add score to memory if needed
-
-        self._memory.add_scores_to_memory(scores=[score])
         return [score]

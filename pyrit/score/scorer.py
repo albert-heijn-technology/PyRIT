@@ -530,7 +530,7 @@ class Scorer(abc.ABC):
         # TEMPORARY fix to prevent multi-piece responses from breaking scoring logic of attack
         for piece in scorable_pieces[:1]:
             # Run all scorers on this piece in parallel
-            tasks = [scorer._score_async(request_response=piece, task=task) for scorer in scorers]
+            tasks = [scorer.score_async(request_response=piece, task=task) for scorer in scorers]
             score_lists = await asyncio.gather(*tasks)
 
             # Flatten the results

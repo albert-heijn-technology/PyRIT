@@ -597,9 +597,11 @@ class RedTeamingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext, AttackRes
             conversation_json = json.dumps(combined_responses, indent=4)
             prompt_request_responses[-1].request_pieces[0].converted_value = conversation_json
 
-            score = (await self._objective_scorer._score_async(request_response=prompt_request_responses[-1].request_pieces[0]))[
-                0
-            ]
+            score = (
+                await self._objective_scorer.score_async(
+                    request_response=prompt_request_responses[-1].request_pieces[0]
+                )
+            )[0]
             return score
         else:
             # Use the built-in scorer method for objective scoring
