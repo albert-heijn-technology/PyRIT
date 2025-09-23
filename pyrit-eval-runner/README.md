@@ -67,7 +67,7 @@ Notes:
 
 Required keys:
 - `dataset_path`: YAML dataset with single or multi-turn test cases
-- Either `evaluator_path` (single scorer) or `evaluator_paths` (list of scorer YAMLs; the first is the objective scorer, the remainder become auxiliary scorers)
+- Either `evaluator_path` (single scorer) or `evaluator_paths` (list of scorer YAMLs; the first is the objective scorer, the remainder become auxiliary scorers). Paths must be unique after resolution.
 - `http_request_raw`: Raw HTTP request template containing `{{PROMPT}}`, and placeholders `{base_url}` and `{token}`
 - `field_defs`: Parser fields for `MultiFieldResponseParser` (e.g., json/regex/stream)
 - `thread_id_pattern`: SSE event marker to locate thread creation

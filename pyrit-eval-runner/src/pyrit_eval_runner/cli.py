@@ -37,22 +37,7 @@ def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[Path]:
     return p
 
 
-def _split_path_list(value: str) -> List[str]:
-    return [item.strip() for item in value.split(os.pathsep) if item.strip()]
-
-
 def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[str]:
-    env_multi = os.getenv("PYRIT_EVALUATOR_PATHS")
-    if env_multi:
-        parts = _split_path_list(env_multi)
-        if parts:
-            return parts
-        raise ValueError("PYRIT_EVALUATOR_PATHS is set but empty")
-
-    env_single = os.getenv("PYRIT_EVALUATOR_PATH")
-    if env_single:
-        return [env_single]
-
     cfg_multi = cfg.get("evaluator_paths")
     if cfg_multi is not None:
         if not isinstance(cfg_multi, Sequence) or isinstance(cfg_multi, (str, bytes)):
@@ -138,10 +123,21 @@ async def run_async(args: argparse.Namespace) -> int:
         _fail(f"Dataset file not found: {dataset_path_p}")
 
     evaluator_paths_p: List[Path] = []
+    seen_evaluators: dict[Path, str] = {}
     for evaluator_path in evaluator_paths:
         resolved_path = _resolve_path(cfg_dir, evaluator_path)
         if not resolved_path or not resolved_path.exists():
             _fail(f"Evaluator file not found: {resolved_path}")
+
+        canonical = resolved_path.resolve()
+        if canonical in seen_evaluators:
+            _fail(
+                "Duplicate evaluator paths detected: "
+                f"'{evaluator_path}' resolves to the same location as "
+                f"'{seen_evaluators[canonical]}'"
+            )
+
+        seen_evaluators[canonical] = evaluator_path
         evaluator_paths_p.append(resolved_path)
 
     http_raw = cfg.get("http_request_raw")
