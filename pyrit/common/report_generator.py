@@ -76,6 +76,7 @@ def create_report(
         execution_time: float = 0.0,
         save_path: Union[str, Path] = "report.html",
         scorer_weights: Optional[Dict[str, float]] = None,
+        scorer_required: Optional[Dict[str, bool]] = None,
         default_thresholds: Optional[Dict[str, float]] = None,
 ):
     """
@@ -133,6 +134,7 @@ def create_report(
 
     scorer_weights = scorer_weights or {}
     default_thresholds = default_thresholds or {"float_scale": threshold, "true_false": 1.0}
+    scorer_required = scorer_required or {}
 
     def identifier_key(identifier: Optional[Dict[str, Any]]) -> Optional[str]:
         if not identifier:
@@ -150,6 +152,11 @@ def create_report(
             return float(scorer_weights[key])
         return 1.0
 
+    def resolve_required(key: Optional[str]) -> bool:
+        if key and key in scorer_required:
+            return bool(scorer_required[key])
+        return False
+
     processed_results: List[Dict[str, Any]] = []
 
     for idx, result in enumerate(results, start=1):
@@ -159,6 +166,7 @@ def create_report(
         turns = aggregated.get("total_turns", len(transcript))
 
         case_passed = True
+        required_failed = False
         turn_averages: List[float] = []
 
         for turn in transcript:
@@ -178,17 +186,21 @@ def create_report(
 
                     threshold_value = resolve_threshold(score_type)
                     weight_value = resolve_weight(key)
+                    required_flag = resolve_required(key)
 
                     passed_score = numeric_score >= threshold_value
 
                     score["threshold"] = threshold_value
                     score["passed"] = passed_score
                     score["weight"] = weight_value
+                    score["required"] = required_flag
 
                     numeric_values.append(numeric_score)
                     weighted_sum += weight_value * numeric_score
                     weight_total += weight_value
 
+                    if required_flag and not passed_score:
+                        required_failed = True
                     if not passed_score:
                         case_passed = False
 
@@ -202,9 +214,21 @@ def create_report(
 
         if not turn_averages:
             final_score = 0.0
-            case_passed = False
         else:
             final_score = min(turn_averages)
+
+        weighted_failed = final_score < threshold
+
+        if required_failed:
+            case_passed = False
+        elif weighted_failed:
+            case_passed = False
+        else:
+            case_passed = True
+
+        failure_reason = None
+        if not case_passed:
+            failure_reason = "Required scorers below threshold" if required_failed else "Weighted average below threshold"
 
         if case_passed:
             passed_cases += 1
@@ -215,6 +239,7 @@ def create_report(
             "turns": turns,
             "final_score": final_score,
             "passed": case_passed,
+            "failure_reason": failure_reason,
             "original_index": idx,
         })
 
@@ -230,6 +255,8 @@ def create_report(
             f"<strong>Turns:</strong> {result_data['turns']} | "
             f"<strong>Lowest Weighted Score:</strong> {result_data['final_score']:.2f}"
         )
+        if not result_data["passed"] and result_data.get("failure_reason"):
+            summary += f" | <strong>Failure Reason:</strong> {sanitize(result_data['failure_reason'])}"
 
         html += f"<details class='testcase'><summary class='testcasesum'>{summary}</summary><table>"
         html += "<thead><tr><th>User</th><th>Assistant</th><th>Scores</th></tr></thead><tbody>"
@@ -250,13 +277,14 @@ def create_report(
                 scores_html = "<details><summary>Scorers</summary>"
                 for score in sorted_scores:
                     identifier = score.get("scorer_identifier") or {}
-                    label_text = identifier.get("label") or identifier.get("__type__", "Scorer")
+                    label_text = identifier.get("__type__", "Scorer")
                     config_path = identifier.get("config_path")
                     rationale = sanitize(score.get("rationale", ""))
                     expected = score.get("expected_output")
                     threshold_val = score.get("threshold")
                     passed_val = score.get("passed", False)
                     weight_val = score.get("weight", 1.0)
+                    required_flag = score.get("required", False)
                     score_type = score.get("score_type", "float_scale")
                     raw_value = score.get("raw_score", score.get("score"))
                     numeric_value = float(score.get("score", 0.0))
@@ -279,6 +307,8 @@ def create_report(
 
                     scores_html += "<div>"
                     scores_html += f"<div><strong>{sanitize(label_text)}</strong>"
+                    if required_flag:
+                        scores_html += "<span style='margin-left:6px;color:#b71c1c;font-weight:600'>(Required)</span>"
                     if config_path:
                         scores_html += f"<span style='margin-left:10px;color:#888;font-size:0.9rem;'>{sanitize(config_path)}</span>"
                     scores_html += "</div>"

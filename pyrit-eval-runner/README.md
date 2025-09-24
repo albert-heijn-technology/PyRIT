@@ -47,6 +47,7 @@ Optional path overrides via env:
 - `PYRIT_EVALUATOR_PATHS` (pathsep-delimited) overrides the list of evaluator YAMLs
 - `PYRIT_EVALUATOR_PATH` overrides a single evaluator path
 - `PYRIT_SCORER_TYPE` selects scorer type (`float_scale` [default] or `true_false`)
+- `PYRIT_REPORT_THRESHOLD` overrides the global pass threshold used in the HTML report (defaults to `0.8`)
 
 ## CLI
 
@@ -69,6 +70,8 @@ Required keys:
 - `dataset_path`: YAML dataset with single or multi-turn test cases
 - Either `evaluator_path` (single scorer) or `evaluator_paths` (list of scorer entries; the first is the objective scorer, the remainder become auxiliary scorers). Paths must be unique after resolution. When using `evaluator_paths`, each entry can optionally include:
   - `weight`: Weight applied when computing the weighted average score for each turn (defaults to `1.0`).
+  - `required`: When `true`, the scorer is highlighted as a required metric in the report; any turn where it falls below the threshold marks the entire test case as failed, regardless of the weighted average.
+- `report_threshold` (optional): Overrides the global pass threshold used when evaluating scorer results (defaults to `0.8`; true/false scorers still require `True`).
 - `http_request_raw`: Raw HTTP request template containing `{{PROMPT}}`, and placeholders `{base_url}` and `{token}`
 - `field_defs`: Parser fields for `MultiFieldResponseParser` (e.g., json/regex/stream)
 - `thread_id_pattern`: SSE event marker to locate thread creation
@@ -81,6 +84,49 @@ All outputs are written under `--out` (default `pyrit_reports`):
 
 Exit codes:
 - 0 on completion (no gating).
+
+### Configuration reference
+
+```yaml
+dataset_path: "dataset.yaml"
+report_threshold: 0.85        # optional; defaults to 0.8
+evaluator_paths:
+  - path: "scorers/refusal.yaml"         # objective scorer; weight defaults to 1.0
+  - path: "scorers/helpfulness.yaml"     # auxiliary scorer with custom weight
+    weight: 0.6
+  - path: "scorers/hallucination.yaml"
+    weight: 0.4
+http_request_raw: |
+  POST {base_url} HTTP/1.1
+  Content-Type: application/json
+  X-Authorization: {token}
+
+  {{
+      "data": "{{PROMPT}}"
+  }}
+field_defs:
+  - name: "Text"
+    type: "stream"
+    pattern: 'event:TEXT_MESSAGE'
+thread_id_pattern: "event:THREAD_CREATED"
+thread_id_query_param_key: "threadId"
+```
+
+Behavior when values are omitted or left blank:
+
+| Field | If omitted/blank | Notes |
+| ----- | ---------------- | ----- |
+| `dataset_path` | **Error** | Path is required and must resolve relative to the config. |
+| `report_threshold` | Defaults to `0.8` | Applies globally to all float scores; true/false scorers always require `True`. Can also be set via `PYRIT_REPORT_THRESHOLD`. |
+| `evaluator_path(s)` | **Error** if none provided | With `evaluator_paths`, each entry must include a `path`. Missing or empty values raise an error. |
+| `weight` inside `evaluator_paths` | Defaults to `1.0` | Weighted averages use the provided value; blanks fall back to 1.0. |
+| `required` inside `evaluator_paths` | Defaults to `false` | When `true`, failing the scorer below threshold marks the case as failed even if the weighted average passes. |
+| `http_request_raw` | **Error** | Must include `{base_url}` and `{token}` placeholders. |
+| `field_defs` | **Error** or ignored | Must be a list. Empty list is allowed but produces no parsed fields. |
+| `thread_id_pattern` | **Error** | Needed for streaming IDs. |
+| `thread_id_query_param_key` | Defaults to `threadId` | Leave blank to use the default query parameter name. |
+
+If any scorer configuration resolves to the same file twice, the runner aborts with a duplicate-path error. All relative paths are resolved against the config’s directory, so leaving a path blank or pointing outside the repo will cause a clear “file not found” error before execution.
 
 ## CI usage in Repo B
 

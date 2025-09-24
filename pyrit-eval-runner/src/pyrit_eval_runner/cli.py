@@ -54,6 +54,8 @@ def _normalise_evaluator_entry(entry: Any) -> Dict[str, Any]:
                 normalised["weight"] = float(entry["weight"])
             except (TypeError, ValueError):
                 raise ValueError("Evaluator weight must be a numeric value")
+        if "required" in entry and entry["required"] is not None:
+            normalised["required"] = bool(entry["required"])
         return normalised
     raise ValueError("Evaluator entries must be strings or mappings containing a 'path'")
 
@@ -176,6 +178,7 @@ async def run_async(args: argparse.Namespace) -> int:
                 "resolved_path": resolved_path,
                 "display_path": str(raw_path),
                 "weight": entry.get("weight"),
+                "required": bool(entry.get("required", False)),
             }
         )
 
@@ -183,6 +186,14 @@ async def run_async(args: argparse.Namespace) -> int:
     field_defs = cfg.get("field_defs")
     thread_id_pattern = cfg.get("thread_id_pattern")
     thread_id_key = cfg.get("thread_id_query_param_key", "threadId")
+
+    env_report_threshold = os.getenv("PYRIT_REPORT_THRESHOLD")
+    if env_report_threshold is not None:
+        report_threshold = float(env_report_threshold)
+    elif "report_threshold" in cfg:
+        report_threshold = float(cfg["report_threshold"])
+    else:
+        report_threshold = 0.8
     if not isinstance(field_defs, list):
         _fail("Config field_defs must be a list")
     if not http_raw or not thread_id_pattern:
@@ -266,10 +277,13 @@ async def run_async(args: argparse.Namespace) -> int:
     )
 
     scorer_weight_map: Dict[str, float] = {}
+    scorer_required_map: Dict[str, bool] = {}
     for spec in evaluator_specs:
         identifier_json = json.dumps(spec["instance"].get_identifier(), sort_keys=True)
         if spec.get("weight") is not None:
             scorer_weight_map[identifier_json] = float(spec["weight"])
+        if spec.get("required") is not None:
+            scorer_required_map[identifier_json] = bool(spec["required"])
 
     # Load dataset (compatible with Repo A's loader semantics)
     def _load_test_data(file_path: Path) -> List[Dict[str, Any]]:
@@ -321,12 +335,14 @@ async def run_async(args: argparse.Namespace) -> int:
     # HTML report (timestamped inside helper)
     create_report(
         results=chat_reports,
+        threshold=report_threshold,
         execution_time=elapsed,
         description=(
             "Evaluation of dataset examples. Final conversation score is the minimum weighted step score across the transcript."
         ),
         save_path=out_dir / "dataset_report.html",
         scorer_weights=scorer_weight_map,
+        scorer_required=scorer_required_map,
     )
 
     # Only print the reports directory; no gating/exit failure
