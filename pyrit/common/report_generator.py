@@ -252,7 +252,7 @@ def create_report(
             f"Test Case {result_data['original_index']}: <strong>Objective:</strong> {result_data['objective']} | "
             f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | "
             f"<strong>Turns:</strong> {result_data['turns']} | "
-            f"<strong>Lowest Weighted Score:</strong> {result_data['final_score']:.2f}"
+            f"<strong>Score:</strong> {result_data['final_score']:.2f}"
         )
         if not result_data["passed"] and result_data.get("failure_reason"):
             reason_code = result_data.get("failure_reason")
