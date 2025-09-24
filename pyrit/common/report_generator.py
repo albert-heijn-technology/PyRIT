@@ -219,16 +219,15 @@ def create_report(
 
         weighted_failed = final_score < threshold
 
+        failure_reason_code = None
         if required_failed:
             case_passed = False
+            failure_reason_code = "required"
         elif weighted_failed:
             case_passed = False
+            failure_reason_code = "weighted"
         else:
             case_passed = True
-
-        failure_reason = None
-        if not case_passed:
-            failure_reason = "Required scorers below threshold" if required_failed else "Weighted average below threshold"
 
         if case_passed:
             passed_cases += 1
@@ -239,7 +238,7 @@ def create_report(
             "turns": turns,
             "final_score": final_score,
             "passed": case_passed,
-            "failure_reason": failure_reason,
+            "failure_reason": failure_reason_code,
             "original_index": idx,
         })
 
@@ -256,7 +255,14 @@ def create_report(
             f"<strong>Lowest Weighted Score:</strong> {result_data['final_score']:.2f}"
         )
         if not result_data["passed"] and result_data.get("failure_reason"):
-            summary += f" | <strong>Failure Reason:</strong> {sanitize(result_data['failure_reason'])}"
+            reason_code = result_data.get("failure_reason")
+            if reason_code == "required":
+                detail_text = "Required Scorer"
+            elif reason_code == "weighted":
+                detail_text = "Weighted Score"
+            else:
+                detail_text = "Failure"
+            summary += f" | <strong>Reason:</strong> {sanitize(detail_text)}"
 
         html += f"<details class='testcase'><summary class='testcasesum'>{summary}</summary><table>"
         html += "<thead><tr><th>User</th><th>Assistant</th><th>Scores</th></tr></thead><tbody>"
