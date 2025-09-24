@@ -1,12 +1,13 @@
 import argparse
 import asyncio
+import json
 import logging
 import os
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Mapping
 from pyrit.prompt_target import HTTPTargetX
 import aiohttp
 import yaml
@@ -37,19 +38,50 @@ def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[Path]:
     return p
 
 
-def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[str]:
+def _split_path_list(value: str) -> List[str]:
+    return [item.strip() for item in value.split(os.pathsep) if item.strip()]
+
+
+def _normalise_evaluator_entry(entry: Any) -> Dict[str, Any]:
+    if isinstance(entry, str):
+        return {"path": entry}
+    if isinstance(entry, Mapping):
+        if "path" not in entry:
+            raise ValueError("Each evaluator entry must include a 'path' key")
+        normalised: Dict[str, Any] = {"path": str(entry["path"])}
+        if "weight" in entry and entry["weight"] is not None:
+            try:
+                normalised["weight"] = float(entry["weight"])
+            except (TypeError, ValueError):
+                raise ValueError("Evaluator weight must be a numeric value")
+        return normalised
+    raise ValueError("Evaluator entries must be strings or mappings containing a 'path'")
+
+
+def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    env_multi = os.getenv("PYRIT_EVALUATOR_PATHS")
+    if env_multi:
+        parts = _split_path_list(env_multi)
+        if parts:
+            return [{"path": part} for part in parts]
+        raise ValueError("PYRIT_EVALUATOR_PATHS is set but empty")
+
+    env_single = os.getenv("PYRIT_EVALUATOR_PATH")
+    if env_single:
+        return [{"path": env_single}]
+
     cfg_multi = cfg.get("evaluator_paths")
     if cfg_multi is not None:
-        if not isinstance(cfg_multi, Sequence) or isinstance(cfg_multi, (str, bytes)):
-            raise ValueError("Config key 'evaluator_paths' must be a list of paths")
-        parts = [str(item).strip() for item in cfg_multi if str(item).strip()]
-        if not parts:
-            raise ValueError("Config key 'evaluator_paths' must contain at least one path")
-        return parts
+        if not isinstance(cfg_multi, list):
+            raise ValueError("Config key 'evaluator_paths' must be a list")
+        entries = [_normalise_evaluator_entry(item) for item in cfg_multi]
+        if not entries:
+            raise ValueError("Config key 'evaluator_paths' must contain at least one entry")
+        return entries
 
     cfg_single = cfg.get("evaluator_path")
     if cfg_single:
-        return [str(cfg_single)]
+        return [_normalise_evaluator_entry(cfg_single)]
 
     return []
 
@@ -122,10 +154,11 @@ async def run_async(args: argparse.Namespace) -> int:
     if not dataset_path_p or not dataset_path_p.exists():
         _fail(f"Dataset file not found: {dataset_path_p}")
 
-    evaluator_paths_p: List[Path] = []
-    seen_evaluators: dict[Path, str] = {}
-    for evaluator_path in evaluator_paths:
-        resolved_path = _resolve_path(cfg_dir, evaluator_path)
+    evaluator_entries: List[Dict[str, Any]] = []
+    seen_evaluators: Dict[Path, str] = {}
+    for entry in evaluator_paths:
+        raw_path = entry.get("path")
+        resolved_path = _resolve_path(cfg_dir, raw_path)
         if not resolved_path or not resolved_path.exists():
             _fail(f"Evaluator file not found: {resolved_path}")
 
@@ -133,12 +166,18 @@ async def run_async(args: argparse.Namespace) -> int:
         if canonical in seen_evaluators:
             _fail(
                 "Duplicate evaluator paths detected: "
-                f"'{evaluator_path}' resolves to the same location as "
+                f"'{raw_path}' resolves to the same location as "
                 f"'{seen_evaluators[canonical]}'"
             )
 
-        seen_evaluators[canonical] = evaluator_path
-        evaluator_paths_p.append(resolved_path)
+        seen_evaluators[canonical] = str(raw_path)
+        evaluator_entries.append(
+            {
+                "resolved_path": resolved_path,
+                "display_path": str(raw_path),
+                "weight": entry.get("weight"),
+            }
+        )
 
     http_raw = cfg.get("http_request_raw")
     field_defs = cfg.get("field_defs")
@@ -185,18 +224,30 @@ async def run_async(args: argparse.Namespace) -> int:
 
     from pyrit.prompt_target import OpenAIChatTarget
     from pyrit.score import Evaluator
-    evaluators: List[Any] = []
-    for path in evaluator_paths_p:
-        evaluators.append(
-            Evaluator(
-                chat_target=OpenAIChatTarget(),
-                evaluator_yaml_path=path,
-                scorer_type=scorer_type,  # type: ignore[arg-type]
-            )
+    evaluator_specs: List[Dict[str, Any]] = []
+    for entry in evaluator_entries:
+        scorer = Evaluator(
+            chat_target=OpenAIChatTarget(),
+            evaluator_yaml_path=entry["resolved_path"],
+            scorer_type=scorer_type,  # type: ignore[arg-type]
         )
 
-    objective_evaluator = evaluators[0]
-    auxiliary_evaluators = evaluators[1:]
+        original_get_identifier = scorer.get_identifier
+
+        def _identifier_with_path(self, _orig=original_get_identifier, _path=entry["display_path"]):
+            identifier = _orig()
+            identifier["config_path"] = _path
+            return identifier
+
+        scorer.get_identifier = _identifier_with_path.__get__(scorer, scorer.__class__)  # type: ignore[attr-defined]
+
+        if entry.get("weight") is not None:
+            setattr(scorer, "_report_weight", float(entry["weight"]))
+
+        evaluator_specs.append({**entry, "instance": scorer})
+
+    objective_evaluator = evaluator_specs[0]["instance"]
+    auxiliary_evaluators = [spec["instance"] for spec in evaluator_specs[1:]]
 
     from pyrit.executor.attack import (
         PromptSendingAttack,
@@ -213,6 +264,12 @@ async def run_async(args: argparse.Namespace) -> int:
         ),
         max_attempts_on_failure=0,
     )
+
+    scorer_weight_map: Dict[str, float] = {}
+    for spec in evaluator_specs:
+        identifier_json = json.dumps(spec["instance"].get_identifier(), sort_keys=True)
+        if spec.get("weight") is not None:
+            scorer_weight_map[identifier_json] = float(spec["weight"])
 
     # Load dataset (compatible with Repo A's loader semantics)
     def _load_test_data(file_path: Path) -> List[Dict[str, Any]]:
@@ -266,9 +323,10 @@ async def run_async(args: argparse.Namespace) -> int:
         results=chat_reports,
         execution_time=elapsed,
         description=(
-            "Evaluation of dataset examples. Final conversation score is the minimum step score across the transcript."
+            "Evaluation of dataset examples. Final conversation score is the minimum weighted step score across the transcript."
         ),
         save_path=out_dir / "dataset_report.html",
+        scorer_weights=scorer_weight_map,
     )
 
     # Only print the reports directory; no gating/exit failure

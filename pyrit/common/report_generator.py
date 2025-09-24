@@ -3,7 +3,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 import json
 from pyrit.memory import CentralMemory
 
@@ -74,7 +74,9 @@ def create_report(
         title: str = "Test Report",
         description: str = "",
         execution_time: float = 0.0,
-        save_path: Union[str, Path] = "report.html"
+        save_path: Union[str, Path] = "report.html",
+        scorer_weights: Optional[Dict[str, float]] = None,
+        default_thresholds: Optional[Dict[str, float]] = None,
 ):
     """
     Creates and saves an HTML report with expandable entries.
@@ -129,11 +131,25 @@ def create_report(
   </div>
 """
 
-    def safe_float(val):
+    scorer_weights = scorer_weights or {}
+    default_thresholds = default_thresholds or {"float_scale": threshold, "true_false": 1.0}
+
+    def identifier_key(identifier: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not identifier:
+            return None
         try:
-            return float(val)
+            return json.dumps(identifier, sort_keys=True)
         except Exception:
-            return 1.0 if str(val).lower() == "true" else 0.0
+            return None
+
+    def resolve_threshold(score_type: str) -> float:
+        return float(default_thresholds.get(score_type, threshold))
+
+    def resolve_weight(key: Optional[str]) -> float:
+        if key and key in scorer_weights:
+            return float(scorer_weights[key])
+        return 1.0
+
     processed_results: List[Dict[str, Any]] = []
 
     for idx, result in enumerate(results, start=1):
@@ -142,20 +158,55 @@ def create_report(
         aggregated = result.get("aggregated_metrics", {})
         turns = aggregated.get("total_turns", len(transcript))
 
-        # ---- Final score logic
-        turn_averages = []
-        for turn in transcript:
-            assistant_piece = next(
-                (p for p in turn.get("pieces", []) if p.get("role", "").lower() == "assistant" and p.get("scores")), None
-            )
-            if assistant_piece and assistant_piece.get("scores"):
-                scores = [safe_float(s.get("score", 0)) for s in assistant_piece["scores"]]
-                if scores:
-                    turn_averages.append(sum(scores) / len(scores))
-        final_score = min(turn_averages) if turn_averages else 0.0
+        case_passed = True
+        turn_averages: List[float] = []
 
-        passed = final_score >= threshold
-        if passed:
+        for turn in transcript:
+            for piece in turn.get("pieces", []):
+                if piece.get("role", "").lower() != "assistant":
+                    continue
+
+                weighted_sum = 0.0
+                weight_total = 0.0
+                numeric_values: List[float] = []
+
+                for score in piece.get("scores", []):
+                    score_type = score.get("score_type", "float_scale")
+                    numeric_score = float(score.get("score", 0.0))
+                    identifier = score.get("scorer_identifier")
+                    key = identifier_key(identifier)
+
+                    threshold_value = resolve_threshold(score_type)
+                    weight_value = resolve_weight(key)
+
+                    passed_score = numeric_score >= threshold_value
+
+                    score["threshold"] = threshold_value
+                    score["passed"] = passed_score
+                    score["weight"] = weight_value
+
+                    numeric_values.append(numeric_score)
+                    weighted_sum += weight_value * numeric_score
+                    weight_total += weight_value
+
+                    if not passed_score:
+                        case_passed = False
+
+                if numeric_values:
+                    if weight_total > 0:
+                        weighted_average = weighted_sum / weight_total
+                    else:
+                        weighted_average = sum(numeric_values) / len(numeric_values)
+                    piece["weighted_average"] = weighted_average
+                    turn_averages.append(weighted_average)
+
+        if not turn_averages:
+            final_score = 0.0
+            case_passed = False
+        else:
+            final_score = min(turn_averages)
+
+        if case_passed:
             passed_cases += 1
 
         processed_results.append({
@@ -163,7 +214,7 @@ def create_report(
             "transcript": transcript,
             "turns": turns,
             "final_score": final_score,
-            "passed": passed,
+            "passed": case_passed,
             "original_index": idx,
         })
 
@@ -176,7 +227,8 @@ def create_report(
         summary = (
             f"Test Case {result_data['original_index']}: <strong>Objective:</strong> {result_data['objective']} | "
             f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | "
-            f"<strong>Turns:</strong> {result_data['turns']} | <strong>Final Score:</strong> {result_data['final_score']:.2f}"
+            f"<strong>Turns:</strong> {result_data['turns']} | "
+            f"<strong>Lowest Weighted Score:</strong> {result_data['final_score']:.2f}"
         )
 
         html += f"<details class='testcase'><summary class='testcasesum'>{summary}</summary><table>"
@@ -197,22 +249,58 @@ def create_report(
             if sorted_scores:
                 scores_html = "<details><summary>Scorers</summary>"
                 for score in sorted_scores:
-                    val = score.get("score")
+                    identifier = score.get("scorer_identifier") or {}
+                    label_text = identifier.get("label") or identifier.get("__type__", "Scorer")
+                    config_path = identifier.get("config_path")
                     rationale = sanitize(score.get("rationale", ""))
                     expected = score.get("expected_output")
-                    try:
-                        val_float = float(val)
-                    except:
-                        val_float = True if str(val).lower() == "true" else False
-                    cls = "score-pass" if (isinstance(val_float, (int, float)) and val_float >= threshold) or val_float is True else "score-fail"
-                    if isinstance(val_float, bool):
-                        val_display = "✔️ True" if val_float else "❌ False"
+                    threshold_val = score.get("threshold")
+                    passed_val = score.get("passed", False)
+                    weight_val = score.get("weight", 1.0)
+                    score_type = score.get("score_type", "float_scale")
+                    raw_value = score.get("raw_score", score.get("score"))
+                    numeric_value = float(score.get("score", 0.0))
+
+                    if score_type == "true_false":
+                        value_display = "✔️ True" if str(raw_value).lower() == "true" else "❌ False"
+                        if threshold_val is None:
+                            threshold_display = "True"
+                        elif threshold_val >= 1.0:
+                            threshold_display = "True"
+                        elif threshold_val <= 0.0:
+                            threshold_display = "False"
+                        else:
+                            threshold_display = f"{threshold_val:.2f}"
                     else:
-                        val_display = f"{val_float:.2f}"
-                    scores_html += f"<div><strong class='{cls}'>{val_display}</strong>"
+                        value_display = f"{numeric_value:.2f}"
+                        threshold_display = f"{threshold_val:.2f}" if threshold_val is not None else "-"
+
+                    cls = "score-pass" if passed_val else "score-fail"
+
+                    scores_html += "<div>"
+                    scores_html += f"<div><strong>{sanitize(label_text)}</strong>"
+                    if config_path:
+                        scores_html += f"<span style='margin-left:10px;color:#888;font-size:0.9rem;'>{sanitize(config_path)}</span>"
+                    scores_html += "</div>"
+
+                    scores_html += (
+                        f"<div><span class='{cls}'>{value_display}</span>"
+                        f"<span style='margin-left:12px;color:#555;'>Threshold: {threshold_display}</span>"
+                        f"<span style='margin-left:12px;color:#555;'>Weight: {weight_val:.2f}</span>"
+                    )
                     if expected:
-                        scores_html += f"<span style='margin-left:12px;color:#9a27ad;'><b>Expected:</b> {sanitize(expected)}</span>"
-                    scores_html += f"<div class='explanation'>{rationale}</div></div>"
+                        scores_html += (
+                            f"<span style='margin-left:12px;color:#9a27ad;'><b>Expected:</b> {sanitize(expected)}</span>"
+                        )
+                    scores_html += "</div>"
+                    if rationale:
+                        scores_html += f"<div class='explanation'>{rationale}</div>"
+                    scores_html += "</div>"
+                if assistant_piece.get("weighted_average") is not None:
+                    scores_html += (
+                        f"<div style='margin-top:8px;color:#2c3e50;'><strong>Weighted Average:</strong> "
+                        f"{assistant_piece['weighted_average']:.2f}</div>"
+                    )
                 scores_html += "</details>"
             else:
                 scores_html = "<pre style='color:#999;'>(no scores)</pre>"
@@ -319,22 +407,34 @@ def _entry_to_piece(entry, is_assistant: bool) -> dict:
         "scores": []
     }
 
-    if is_assistant:
-        if entry.scores:
-            piece["scores"] = []
-            for s in entry.scores:
+    if is_assistant and entry.scores:
+        for s in entry.scores:
+            score_type = getattr(s, "score_type", "float_scale")
+            raw_value = s.score_value
+            numeric_score: float
+            raw_display = raw_value
+
+            if score_type == "true_false":
+                truthy = str(raw_value).lower() == "true"
+                numeric_score = 1.0 if truthy else 0.0
+                raw_display = "true" if truthy else "false"
+            else:
                 try:
-                    score_val = float(s.score_value)
+                    numeric_score = float(raw_value)
                 except Exception:
-                    score_val = s.score_value  # keep as-is if not numeric
-                piece["scores"].append({
-                    "score": score_val,
+                    numeric_score = 0.0
+
+            piece["scores"].append(
+                {
+                    "score": numeric_score,
+                    "raw_score": raw_display,
+                    "score_type": score_type,
                     "rationale": s.score_rationale,
                     "scorer_role": s.scorer_role,
                     "expected_output": s.expected_output,
-                })
+                    "scorer_identifier": s.scorer_class_identifier or {},
+                    "score_category": s.score_category,
+                }
+            )
 
     return piece
-
-
-
