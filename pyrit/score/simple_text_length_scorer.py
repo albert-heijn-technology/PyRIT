@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List
 from pyrit.models import PromptRequestPiece, Score
 from pyrit.score import Scorer
@@ -28,7 +29,7 @@ class SimpleTextLengthScorer(Scorer):
             score_type=self.scorer_type,
             prompt_request_response_id=request_response.id,
             task=task,
-            score_metadata={"length": length, "max_length": self.max_length},
+            score_metadata=json.dumps({"length": length, "max_length": self.max_length}),
             score_value_description=None,
             scorer_role=self.scorer_role
         )
