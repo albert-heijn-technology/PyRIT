@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import importlib.util
 import json
 import logging
 import os
@@ -56,6 +57,13 @@ def _normalise_evaluator_entry(entry: Any) -> Dict[str, Any]:
                 raise ValueError("Evaluator weight must be a numeric value")
         if "required" in entry and entry["required"] is not None:
             normalised["required"] = bool(entry["required"])
+        if "callable" in entry and entry["callable"] is not None:
+            normalised["callable"] = str(entry["callable"])
+        if "params" in entry and entry["params"] is not None:
+            params = entry["params"]
+            if not isinstance(params, Mapping):
+                raise ValueError("Evaluator params must be a mapping")
+            normalised["params"] = dict(params)
         return normalised
     raise ValueError("Evaluator entries must be strings or mappings containing a 'path'")
 
@@ -157,7 +165,7 @@ async def run_async(args: argparse.Namespace) -> int:
         _fail(f"Dataset file not found: {dataset_path_p}")
 
     evaluator_entries: List[Dict[str, Any]] = []
-    seen_evaluators: Dict[Path, str] = {}
+    seen_evaluators: Dict[Any, str] = {}
     for entry in evaluator_paths:
         raw_path = entry.get("path")
         resolved_path = _resolve_path(cfg_dir, raw_path)
@@ -165,20 +173,38 @@ async def run_async(args: argparse.Namespace) -> int:
             _fail(f"Evaluator file not found: {resolved_path}")
 
         canonical = resolved_path.resolve()
-        if canonical in seen_evaluators:
+        suffix = canonical.suffix.lower()
+        callable_name = entry.get("callable")
+        params = entry.get("params") or {}
+        if suffix == ".py" and not callable_name:
+            _fail(
+                "Programmatic evaluator entries referencing '.py' files must include a 'callable' name"
+            )
+        if suffix not in (".yaml", ".yml", ".py"):
+            _fail(
+                "Evaluator path must end with .yaml/.yml for LLM scorers or .py for programmatic scorers"
+            )
+        duplicate_key: Any = (canonical, callable_name) if suffix == ".py" else canonical
+        if duplicate_key in seen_evaluators:
             _fail(
                 "Duplicate evaluator paths detected: "
                 f"'{raw_path}' resolves to the same location as "
-                f"'{seen_evaluators[canonical]}'"
+                f"'{seen_evaluators[duplicate_key]}'"
             )
 
-        seen_evaluators[canonical] = str(raw_path)
+        if suffix == ".py" and params and not isinstance(params, dict):
+            _fail("Evaluator params must be provided as a mapping")
+
+        seen_evaluators[duplicate_key] = str(raw_path)
         evaluator_entries.append(
             {
                 "resolved_path": resolved_path,
                 "display_path": str(raw_path),
                 "weight": entry.get("weight"),
                 "required": bool(entry.get("required", False)),
+                "callable": callable_name,
+                "params": params if isinstance(params, dict) else {},
+                "kind": "programmatic" if suffix == ".py" else "llm",
             }
         )
 
@@ -234,28 +260,75 @@ async def run_async(args: argparse.Namespace) -> int:
         _fail("PYRIT_SCORER_TYPE must be 'float_scale' or 'true_false'")
 
     from pyrit.prompt_target import OpenAIChatTarget
-    from pyrit.score import Evaluator
+    from pyrit.score import Evaluator, Scorer
+
     evaluator_specs: List[Dict[str, Any]] = []
     for entry in evaluator_entries:
-        scorer = Evaluator(
-            chat_target=OpenAIChatTarget(),
-            evaluator_yaml_path=entry["resolved_path"],
-            scorer_type=scorer_type,  # type: ignore[arg-type]
-        )
+        if entry["kind"] == "llm":
+            scorer_instance: Scorer = Evaluator(
+                chat_target=OpenAIChatTarget(),
+                evaluator_yaml_path=entry["resolved_path"],
+                scorer_type=scorer_type,  # type: ignore[arg-type]
+            )
+        else:
+            module_name = f"_pyrit_eval_runner_dynamic_{len(evaluator_specs)}"
+            spec = importlib.util.spec_from_file_location(module_name, entry["resolved_path"])
+            if spec is None or spec.loader is None:
+                _fail(f"Failed to load programmatic scorer module: {entry['display_path']}")
+            module = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(module)
+            except Exception as exc:
+                _fail(f"Error importing programmatic scorer '{entry['display_path']}': {exc}")
 
-        original_get_identifier = scorer.get_identifier
+            try:
+                factory = getattr(module, entry["callable"])
+            except AttributeError:
+                _fail(
+                    "Programmatic evaluator callable '{callable_name}' not found in '{path}'".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+            if not callable(factory):
+                _fail(
+                    "Programmatic evaluator callable '{callable_name}' in '{path}' is not callable".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+            params = entry.get("params") or {}
+            try:
+                scorer_instance = factory(**params)
+            except Exception as exc:
+                _fail(
+                    "Failed to instantiate programmatic evaluator '{callable_name}' from '{path}': {error}".format(
+                        callable_name=entry["callable"], path=entry["display_path"], error=exc
+                    )
+                )
+
+            if not isinstance(scorer_instance, Scorer):
+                _fail(
+                    "Programmatic evaluator '{callable_name}' in '{path}' must return an instance of pyrit.score.Scorer".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+        original_get_identifier = scorer_instance.get_identifier
 
         def _identifier_with_path(self, _orig=original_get_identifier, _path=entry["display_path"]):
             identifier = _orig()
             identifier["config_path"] = _path
             return identifier
 
-        scorer.get_identifier = _identifier_with_path.__get__(scorer, scorer.__class__)  # type: ignore[attr-defined]
+        scorer_instance.get_identifier = _identifier_with_path.__get__(
+            scorer_instance, scorer_instance.__class__
+        )  # type: ignore[attr-defined]
 
         if entry.get("weight") is not None:
-            setattr(scorer, "_report_weight", float(entry["weight"]))
+            setattr(scorer_instance, "_report_weight", float(entry["weight"]))
 
-        evaluator_specs.append({**entry, "instance": scorer})
+        evaluator_specs.append({**entry, "instance": scorer_instance})
 
     objective_evaluator = evaluator_specs[0]["instance"]
     auxiliary_evaluators = [spec["instance"] for spec in evaluator_specs[1:]]
