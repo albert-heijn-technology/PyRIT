@@ -39,6 +39,8 @@ CLI flags (preferred in CI):
 - `--openai-chat-endpoint` (overrides `OPENAI_CHAT_ENDPOINT`; default `https://api.openai.com/v1`)
 - `--openai-chat-model` (overrides `OPENAI_CHAT_MODEL`; default `gpt-4o-mini`)
 
+Flags take precedence when provided; if a flag is omitted, the runner reads the corresponding environment variable (and falls back to built-in defaults where noted).
+
 Environment variables (fallbacks):
 - `TARGET_ENDPOINT`, `AUTH_TOKEN`, `OPENAI_API_KEY`, `OPENAI_CHAT_ENDPOINT`, `OPENAI_CHAT_MODEL`
 

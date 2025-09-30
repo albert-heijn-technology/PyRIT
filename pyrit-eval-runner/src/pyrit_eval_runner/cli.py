@@ -23,11 +23,33 @@ def _fail(msg: str) -> None:
     sys.exit(2)
 
 
-def _require_env(name: str) -> str:
-    val = os.getenv(name)
+def _resolve_required_setting(arg_value: Optional[str], env_name: str) -> str:
+    """Return a required configuration value preferring CLI arg over env."""
+    if arg_value:
+        os.environ[env_name] = arg_value
+        return arg_value
+
+    val = os.getenv(env_name)
     if not val:
-        _fail(f"Missing environment variable: {name}")
+        _fail(f"Missing configuration for {env_name}")
     return val
+
+
+def _resolve_optional_setting(
+    arg_value: Optional[str], env_name: str, default: Optional[str] = None
+) -> Optional[str]:
+    """Return an optional configuration value preferring CLI arg, then env, then default."""
+    if arg_value:
+        os.environ[env_name] = arg_value
+        return arg_value
+
+    val = os.getenv(env_name)
+    if val is not None:
+        return val
+
+    if default is not None:
+        os.environ[env_name] = default
+    return default
 
 
 def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[Path]:
@@ -132,14 +154,23 @@ async def run_async(args: argparse.Namespace) -> int:
     _setup_logging()
 
     # Env requirements for HTTP templating
-    base_url = _require_env("TARGET_ENDPOINT")
-    token = _require_env("AUTH_TOKEN")
+    base_url = _resolve_required_setting(args.target_endpoint, "TARGET_ENDPOINT")
+    token = _resolve_required_setting(args.auth_token, "AUTH_TOKEN")
 
-    # Map OPENAI_API_KEY -> OPENAI_CHAT_KEY if provided
-    api_key = _require_env("OPENAI_API_KEY")
-    os.environ.setdefault("OPENAI_CHAT_KEY", api_key)
-    os.environ.setdefault("OPENAI_CHAT_ENDPOINT", os.getenv("OPENAI_CHAT_ENDPOINT", "https://api.openai.com/v1"))
-    os.environ.setdefault("OPENAI_CHAT_MODEL", os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini"))
+    api_key = _resolve_required_setting(args.openai_api_key, "OPENAI_API_KEY")
+    chat_endpoint = _resolve_optional_setting(
+        args.openai_chat_endpoint, "OPENAI_CHAT_ENDPOINT", "https://api.openai.com/v1"
+    )
+    chat_model = _resolve_optional_setting(
+        args.openai_chat_model, "OPENAI_CHAT_MODEL", "gpt-4o-mini"
+    )
+
+    if args.openai_api_key or "OPENAI_CHAT_KEY" not in os.environ:
+        os.environ["OPENAI_CHAT_KEY"] = api_key
+    if chat_endpoint:
+        os.environ["OPENAI_CHAT_ENDPOINT"] = chat_endpoint
+    if chat_model:
+        os.environ["OPENAI_CHAT_MODEL"] = chat_model
 
     cfg_path = Path(args.config).resolve()
     if not cfg_path.exists():
@@ -430,6 +461,26 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run evaluations", description="Run evaluations")
     run.add_argument("--config", required=True, help="Path to Repo-B YAML config")
     run.add_argument("--out", default="pyrit_reports", help="Output directory")
+    run.add_argument(
+        "--target-endpoint",
+        help="API base URL (overrides TARGET_ENDPOINT)",
+    )
+    run.add_argument(
+        "--auth-token",
+        help="Authentication token (overrides AUTH_TOKEN)",
+    )
+    run.add_argument(
+        "--openai-api-key",
+        help="OpenAI API key (overrides OPENAI_API_KEY)",
+    )
+    run.add_argument(
+        "--openai-chat-endpoint",
+        help="OpenAI chat endpoint (overrides OPENAI_CHAT_ENDPOINT)",
+    )
+    run.add_argument(
+        "--openai-chat-model",
+        help="OpenAI chat model (overrides OPENAI_CHAT_MODEL)",
+    )
 
     return p
 
