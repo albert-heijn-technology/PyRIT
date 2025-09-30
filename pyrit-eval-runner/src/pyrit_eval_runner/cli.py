@@ -158,7 +158,7 @@ async def run_async(args: argparse.Namespace) -> int:
         _fail(str(exc))
 
     if not evaluator_paths:
-        _fail("Config must include evaluator_path or evaluator_paths (or override via env)")
+        _fail("Config must include evaluator_paths (or override via env)")
 
     dataset_path_p = _resolve_path(cfg_dir, dataset_path)
     if not dataset_path_p or not dataset_path_p.exists():
