@@ -1,12 +1,14 @@
 import argparse
 import asyncio
 import importlib.util
+import inspect
 import json
 import logging
 import os
 import re
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Mapping
 from pyrit.prompt_target import HTTPTargetX
@@ -121,6 +123,44 @@ def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 def _load_yaml(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, (datetime, Path)):
+        return value.isoformat() if isinstance(value, datetime) else str(value)
+    if isinstance(value, set):
+        return sorted(value)
+    return str(value)
+
+
+async def _invoke_completion_hook(
+    hook: Any,
+    *,
+    report_payload: Dict[str, Any],
+    report_path: Path,
+) -> None:
+    try:
+        signature = inspect.signature(hook)
+    except (TypeError, ValueError):
+        signature = None
+
+    kwargs: Dict[str, Any] = {}
+    if signature is not None:
+        parameters = signature.parameters
+        accepts_var_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+        )
+        if accepts_var_kwargs:
+            kwargs = {"report_payload": report_payload, "report_path": str(report_path)}
+        else:
+            if "report_payload" in parameters:
+                kwargs["report_payload"] = report_payload
+            if "report_path" in parameters:
+                kwargs["report_path"] = str(report_path)
+
+    result = hook(**kwargs)
+    if inspect.isawaitable(result):
+        await result
 
 # --- Thread helpers (regex based) ---
 def build_thread_id_parser(thread_id_pattern: str):
@@ -448,6 +488,48 @@ async def run_async(args: argparse.Namespace) -> int:
         scorer_weights=scorer_weight_map,
         scorer_required=scorer_required_map,
     )
+
+    json_report_path = out_dir / "dataset_report.json"
+    report_payload = {
+        "report_threshold": report_threshold,
+        "execution_time_seconds": elapsed,
+        "dataset_path": str(dataset_path_p) if dataset_path_p else None,
+        "output_directory": str(out_dir),
+        "report_html": str(out_dir / "dataset_report.html"),
+        "scorer_weights": scorer_weight_map,
+        "scorer_required": scorer_required_map,
+        "raw_result_count": len(results),
+        "evaluators": [
+            {
+                "identifier": spec["instance"].get_identifier(),
+                "display_path": spec.get("display_path"),
+                "weight": spec.get("weight"),
+                "required": spec.get("required"),
+            }
+            for spec in evaluator_specs
+        ],
+        "chat_reports": chat_reports,
+    }
+
+    serialized_report = json.dumps(report_payload, default=_json_default, indent=2)
+    json_report_path.write_text(serialized_report, encoding="utf-8")
+    normalized_report_payload = json.loads(serialized_report)
+
+    for spec in evaluator_specs:
+        completion_hook = getattr(spec["instance"], "on_run_complete", None)
+        if callable(completion_hook):
+            try:
+                await _invoke_completion_hook(
+                    completion_hook,
+                    report_payload=normalized_report_payload,
+                    report_path=json_report_path,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging only
+                logging.error(
+                    "Error running on_run_complete for evaluator '%s': %s",
+                    spec.get("display_path", spec["instance"].__class__.__name__),
+                    exc,
+                )
 
     # Only print the reports directory; no gating/exit failure
     print(f"Reports: {out_dir}")
