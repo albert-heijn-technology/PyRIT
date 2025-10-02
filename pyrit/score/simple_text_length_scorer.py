@@ -38,6 +38,7 @@ class SimpleTextLengthScorer(Scorer):
             score_metadata=json.dumps({"length": length, "max_length": self.max_length}),
             score_value_description=None,
             scorer_role=self.scorer_role,
+            scorer_class_identifier=self.get_identifier(),
         )
 
         return [score]
