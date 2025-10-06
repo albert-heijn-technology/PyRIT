@@ -78,9 +78,10 @@ def create_report(
         scorer_weights: Optional[Dict[str, float]] = None,
         scorer_required: Optional[Dict[str, bool]] = None,
         default_thresholds: Optional[Dict[str, float]] = None,
+        json_save_path: Optional[Union[str, Path]] = None,
 ):
     """
-    Creates and saves an HTML report with expandable entries.
+    Creates and saves an HTML report with expandable entries and a JSON artifact summarizing the run.
     """
     passed_cases = 0
     total_cases = len(results)
@@ -158,6 +159,7 @@ def create_report(
         return False
 
     processed_results: List[Dict[str, Any]] = []
+    json_results: List[Dict[str, Any]] = []
 
     for idx, result in enumerate(results, start=1):
         objective = _get_attr_or_key(result, "objective") or _get_attr_or_key(result, "prompt") or "N/A"
@@ -242,7 +244,21 @@ def create_report(
             "original_index": idx,
         })
 
+        json_results.append({
+            "objective": objective,
+            "transcript": transcript,
+            "aggregated_metrics": aggregated,
+            "turns": turns,
+            "final_score": final_score,
+            "passed": case_passed,
+            "failure_reason": failure_reason_code,
+            "required_failed": required_failed,
+            "weighted_failed": weighted_failed,
+            "original_index": idx,
+        })
+
     processed_results.sort(key=lambda item: (item["passed"], item["original_index"]))
+    json_results_sorted = sorted(json_results, key=lambda item: (item["passed"], item["original_index"]))
 
     for result_data in processed_results:
         badge = "pass" if result_data["passed"] else "fail"
@@ -350,12 +366,58 @@ def create_report(
 
     if isinstance(save_path, str):
         save_path = Path(save_path)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_path = save_path.with_name(f"{save_path.stem}_{timestamp}{save_path.suffix}")
+    base_html_path = save_path
 
-    with open(save_path, "w", encoding="utf-8") as f:
+    if json_save_path is None:
+        json_candidate: Optional[Path] = base_html_path.with_suffix(".json")
+    else:
+        json_candidate = Path(json_save_path)
+    json_output_path: Optional[Path]
+    if json_candidate is not None:
+        if json_candidate.suffix == "":
+            json_candidate = json_candidate / f"{base_html_path.stem}.json"
+        json_output_path = json_candidate
+    else:
+        json_output_path = None
+
+    timestamp_dt = datetime.now()
+    timestamp = timestamp_dt.strftime("%Y%m%d_%H%M%S")
+    final_html_path = base_html_path.with_name(f"{base_html_path.stem}_{timestamp}{base_html_path.suffix}")
+    final_json_path: Optional[Path] = None
+
+    if json_output_path is not None:
+        final_json_path = json_output_path.with_name(
+            f"{json_output_path.stem}_{timestamp}{json_output_path.suffix}"
+        )
+
+    with open(final_html_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"\n✅ Report saved to: {save_path}")
+
+    json_payload = {
+        "title": title,
+        "description": description,
+        "threshold": threshold,
+        "execution_time_seconds": execution_time,
+        "generated_at": timestamp_dt.isoformat(),
+        "total_cases": total_cases,
+        "passed_cases": passed_cases,
+        "failed_cases": total_cases - passed_cases,
+        "scorer_weights": dict(scorer_weights),
+        "scorer_required": dict(scorer_required),
+        "default_thresholds": dict(default_thresholds),
+        "cases": json_results_sorted,
+        "report_html": str(final_html_path),
+    }
+
+    if final_json_path is not None:
+        json_payload["report_json"] = str(final_json_path)
+        with open(final_json_path, "w", encoding="utf-8") as json_file:
+            json.dump(json_payload, json_file, ensure_ascii=False, indent=2)
+
+    print(f"\n✅ Report saved to: {final_html_path}")
+    if final_json_path is not None:
+        print(f"📄 JSON report saved to: {final_json_path}")
+
     return html
 
 
