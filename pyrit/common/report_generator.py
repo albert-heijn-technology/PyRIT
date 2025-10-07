@@ -272,14 +272,17 @@ def create_report(
         badge = "pass" if result_data["passed"] else "fail"
         label = "Pass" if result_data["passed"] else "Fail"
 
+        if result_data.get("test_case_id") is not None:
+            lead = f"Test Case {result_data['original_index']}: <strong>Case ID:</strong> {result_data['test_case_id']}"
+        else:
+            lead = f"Test Case {result_data['original_index']}: <strong>Objective:</strong> {result_data['objective']}"
+
         summary = (
-            f"Test Case {result_data['original_index']}: <strong>Objective:</strong> {result_data['objective']} | "
+            f"{lead} | "
             f"<strong>Achieved:</strong> <span class='badge {badge}'>{label}</span> | "
             f"<strong>Turns:</strong> {result_data['turns']} | "
             f"<strong>Score:</strong> {result_data['final_score']:.2f}"
         )
-        if result_data.get("test_case_id") is not None:
-            summary += f" | <strong>Case ID:</strong> {result_data['test_case_id']}"
         if not result_data["passed"] and result_data.get("failure_reason"):
             reason_code = result_data.get("failure_reason")
             if reason_code == "required":
