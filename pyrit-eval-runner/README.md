@@ -79,6 +79,9 @@ Required keys:
 - `thread_id_pattern`: SSE event marker to locate thread creation
 - `thread_id_query_param_key`: Query key to inject the thread ID (default `threadId`)
 
+Optional dataset annotations:
+- Include `test_case_id` on any dataset entry to tag the generated reports with a stable identifier. When omitted, the case appears without an ID.
+
 ## Outputs
 
 All outputs are written under `--out` (default `pyrit_reports`):
@@ -112,6 +115,20 @@ field_defs:
     pattern: 'event:TEXT_MESSAGE'
 thread_id_pattern: "event:THREAD_CREATED"
 thread_id_query_param_key: "threadId"
+```
+
+Example dataset entries with optional identifiers:
+
+```yaml
+- test_case_id: "single-turn-001"
+  question: "Summarize the following article"
+  expected_outcome: "A concise summary"
+- test_case_id: "conversation-007"
+  conversation:
+    - question: "List the steps"
+      expected_outcome: "Step-by-step plan"
+    - question: "Provide the details"
+      expected_outcome: "Detailed explanation"
 ```
 
 Behavior when values are omitted or left blank:

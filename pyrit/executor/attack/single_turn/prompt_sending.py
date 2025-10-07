@@ -195,6 +195,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             outcome=outcome,
             outcome_reason=outcome_reason,
             executed_turns=1,
+            metadata=context.metadata.copy() if isinstance(context.metadata, dict) else {},
         )
 
         return result
@@ -239,6 +240,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         """
         single_turn_objectives = []
         single_turn_expected_outputs = []
+        single_turn_metadata: List[Optional[Dict[str, Any]]] = []
         had_http_request_attr = hasattr(self._objective_target, "http_request")
         start_request_copy = getattr(self._objective_target, "http_request", None)
         results = []
@@ -248,6 +250,14 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 if had_http_request_attr:
                     self._objective_target.http_request = start_request_copy
 
+                test_case_id = qa.get("test_case_id")
+                base_metadata: Dict[str, Any] = {}
+                entry_metadata = qa.get("metadata")
+                if isinstance(entry_metadata, dict):
+                    base_metadata.update(entry_metadata)
+                if test_case_id is not None:
+                    base_metadata["test_case_id"] = test_case_id
+
                 if "conversation" in qa:
                     conversation_id = str(uuid.uuid4())
                     is_thread_id_set = False
@@ -256,12 +266,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                         prompt_text = turn["question"]
                         expected_output = turn.get("expected_outcome")
 
+                        metadata = dict(base_metadata)
+
                         context = SingleTurnAttackContext(
                             objective=prompt_text,
                             prepended_conversation=[],
                             memory_labels={},
                             conversation_id=conversation_id,
                             expected_output=expected_output,
+                            metadata=metadata if metadata else None,
                         )
                         result = await self.execute_with_context_async(context=context)
                         prompt_response = result.last_response if result else None
@@ -287,24 +300,28 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                     # Single-turn QA
                     single_turn_objectives.append(qa["question"])
                     single_turn_expected_outputs.append(qa.get("expected_outcome"))
+                    single_turn_metadata.append(dict(base_metadata) if base_metadata else None)
 
             if single_turn_objectives:
                 semaphore = asyncio.Semaphore(thread_count)
 
-                async def single_turn_task(obj, exp, idx):
+                async def single_turn_task(obj, exp, idx, meta):
                     async with semaphore:
                         run_context = SingleTurnAttackContext(
                             objective=obj,
                             prepended_conversation=[],
                             memory_labels={},
                             expected_output=exp,
-                            conversation_id=str(uuid.uuid4())
+                            conversation_id=str(uuid.uuid4()),
+                            metadata=dict(meta) if meta else None,
                         )
                         return await self.execute_with_context_async(context=run_context)
 
                 tasks = [
-                    asyncio.create_task(single_turn_task(obj, exp, idx))
-                    for idx, (obj, exp) in enumerate(zip(single_turn_objectives, single_turn_expected_outputs))
+                    asyncio.create_task(single_turn_task(obj, exp, idx, meta))
+                    for idx, (obj, exp, meta) in enumerate(
+                        zip(single_turn_objectives, single_turn_expected_outputs, single_turn_metadata)
+                    )
                 ]
                 batch_results = await asyncio.gather(*tasks)
                 results.extend(batch_results)

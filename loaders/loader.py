@@ -19,17 +19,24 @@ def load_test_data(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
 
     qa_pairs = []
     for entry in data:
+        test_case_id = entry.get("test_case_id")
         # Handle multi-turn conversational test cases.
         if "conversation" in entry:
             # Optionally, you could validate each turn inside the conversation.
-            qa_pairs.append(entry)
+            qa_entry = dict(entry)
+            if test_case_id is not None:
+                qa_entry["test_case_id"] = test_case_id
+            qa_pairs.append(qa_entry)
         # Handle single-turn test cases.
-        elif "question" in entry and "expected_outcome" in entry:
-            # Convert the key "expected_outcomes" to "expected_outcome"
-            qa_pairs.append({
+        elif "question" in entry and ("expected_outcome" in entry or "expected_outcomes" in entry):
+            expected_value = entry.get("expected_outcome", entry.get("expected_outcomes"))
+            qa_entry = {
                 "question": entry["question"],
-                "expected_outcome": entry["expected_outcome"]
-            })
+                "expected_outcome": expected_value,
+            }
+            if test_case_id is not None:
+                qa_entry["test_case_id"] = test_case_id
+            qa_pairs.append(qa_entry)
         else:
             raise ValueError(f"Unknown test case format in entry: {entry}")
 

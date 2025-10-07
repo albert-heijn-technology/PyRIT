@@ -437,13 +437,21 @@ async def run_async(args: argparse.Namespace) -> int:
             raise ValueError("Dataset YAML should be a list of entries")
         qa_pairs_local: List[Dict[str, Any]] = []
         for entry in data:
+            test_case_id = entry.get("test_case_id")
+
             if "conversation" in entry:
-                qa_pairs_local.append(entry)
+                qa_entry = dict(entry)
+                if test_case_id is not None:
+                    qa_entry["test_case_id"] = test_case_id
+                qa_pairs_local.append(qa_entry)
             elif "question" in entry and ("expected_outcome" in entry or "expected_outcomes" in entry):
-                qa_pairs_local.append({
+                qa_entry = {
                     "question": entry["question"],
-                    "expected_outcome": entry.get("expected_outcome", entry.get("expected_outcomes"))
-                })
+                    "expected_outcome": entry.get("expected_outcome", entry.get("expected_outcomes")),
+                }
+                if test_case_id is not None:
+                    qa_entry["test_case_id"] = test_case_id
+                qa_pairs_local.append(qa_entry)
             else:
                 raise ValueError(f"Unknown test case format in entry: {entry}")
         return qa_pairs_local

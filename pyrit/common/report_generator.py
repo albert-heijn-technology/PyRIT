@@ -165,6 +165,11 @@ def create_report(
         objective = _get_attr_or_key(result, "objective") or _get_attr_or_key(result, "prompt") or "N/A"
         transcript = _get_attr_or_key(result, "transcript") or []
         aggregated = result.get("aggregated_metrics", {})
+        metadata = _get_attr_or_key(result, "metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        test_case_id = metadata.get("test_case_id")
+        test_case_id_display = sanitize(str(test_case_id)) if test_case_id is not None else None
         turns = aggregated.get("total_turns", len(transcript))
 
         case_passed = True
@@ -242,6 +247,7 @@ def create_report(
             "passed": case_passed,
             "failure_reason": failure_reason_code,
             "original_index": idx,
+            "test_case_id": test_case_id_display,
         })
 
         json_results.append({
@@ -255,6 +261,8 @@ def create_report(
             "required_failed": required_failed,
             "weighted_failed": weighted_failed,
             "original_index": idx,
+            "metadata": metadata,
+            "test_case_id": test_case_id,
         })
 
     processed_results.sort(key=lambda item: (item["passed"], item["original_index"]))
@@ -270,6 +278,8 @@ def create_report(
             f"<strong>Turns:</strong> {result_data['turns']} | "
             f"<strong>Score:</strong> {result_data['final_score']:.2f}"
         )
+        if result_data.get("test_case_id") is not None:
+            summary += f" | <strong>Case ID:</strong> {result_data['test_case_id']}"
         if not result_data["passed"] and result_data.get("failure_reason"):
             reason_code = result_data.get("failure_reason")
             if reason_code == "required":
