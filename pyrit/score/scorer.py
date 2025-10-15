@@ -588,6 +588,9 @@ class Scorer(abc.ABC):
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
             return result
+        
+        has_auxiliary = auxiliary_scorers is not None
+        has_objective = objective_scorers is not None
 
         # Set the scorer roles of the scorers here
         if has_auxiliary:
