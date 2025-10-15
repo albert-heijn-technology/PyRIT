@@ -3,16 +3,17 @@
 
 import enum
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 
 import yaml
 from langsmith import expect
 
 from pyrit.common.path import DATASETS_PATH
 from pyrit.models import PromptRequestPiece, SeedPrompt
-from pyrit.models.score import Score, UnvalidatedScore
+from pyrit.models.score import Score, UnvalidatedScore, ScoreType
 from pyrit.prompt_target import PromptChatTarget
 from pyrit.score.scorer import Scorer
+from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
 SCORERS_PATH = Path(DATASETS_PATH, "score", "LLM").resolve()
 
@@ -49,6 +50,11 @@ class EvaluatorQuestion:
 class Evaluator(Scorer):
     """A class that represents a generic LLM based evaluator for scoring."""
 
+    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+        supported_data_types=["text"],
+        is_objective_required=False,
+    )
+
     def __init__(
             self,
             *,
@@ -59,9 +65,12 @@ class Evaluator(Scorer):
             additional_evaluator_variables: Optional[dict] = None,
             scorer_type: Literal["true_false", "float_scale"] = "float_scale",
             scorer_role: Optional[str] = None,
+            validator: Optional[ScorerPromptValidator] = None,
     ) -> None:
+        super().__init__(validator=validator or self._default_validator)
+
         self._prompt_target = chat_target
-        self.scorer_type = scorer_type
+        self.scorer_type: ScoreType = scorer_type  # type: ignore[assignment]
         self.scorer_role = scorer_role
         self._additional_evaluator_variables = additional_evaluator_variables or {}
 
@@ -93,45 +102,82 @@ class Evaluator(Scorer):
             evaluation_criteria=evaluation_criteria, metadata=metadata
         )
 
-    async def _score_async(self, request_response: PromptRequestPiece, *, task: Optional[str] = None) -> list[Score]:
+    def validate(self, request_response: PromptRequestPiece, *, task: Optional[str] = None):
+        pass
+
+    async def _score_piece_async(
+        self, request_piece: PromptRequestPiece, *, objective: Optional[str] = None
+    ) -> List[Score]:
         """
-        Scores the given request_response using "self-ask" for the chat target and adds score to memory.
-
-        Args:
-            request_response (PromptRequestPiece): The prompt request piece containing the text to be scored.
-            task (str): The task based on which the text should be scored (the original attacker model's objective).
-                Currently not supported for this scorer.
-
-        Returns:
-            list[Score]: The request_response scored.
-                         The category is configured from the TrueFalseQuestionPath.
-                         The score_value is True or False based on which fits best.
-                         metadata can be configured to provide additional information.
+        Score a single response piece using the evaluator template.
         """
-
-        self.validate(request_response, task=task)
+        self.validate(request_piece, task=objective)
 
         unvalidated_score: UnvalidatedScore = await self._score_value_with_llm(
             prompt_target=self._prompt_target,
             system_prompt=self._system_prompt,
-            prompt_request_value=request_response.converted_value,
-            prompt_request_data_type=request_response.converted_value_data_type,
-            scored_prompt_id=request_response.id,
+            prompt_request_value=request_piece.converted_value,
+            prompt_request_data_type=request_piece.converted_value_data_type,
+            scored_prompt_id=request_piece.id,
             category=self._score_category,
-            task=task,
-            request_prompt=request_response.original_value,
-            expected_output=request_response.expected_output,
+            objective=objective,
+            attack_identifier=request_piece.attack_identifier,
+            expected_output=request_piece.expected_output,
+            request_prompt=request_piece.original_value,
             additional_evaluator_variables=self._additional_evaluator_variables,
         )
 
-        score = unvalidated_score.to_score(
-            score_value=unvalidated_score.raw_score_value,
-            expected_output=request_response.expected_output,
+        score_value: str
+        if self.scorer_type == "true_false":
+            raw = str(unvalidated_score.raw_score_value).strip().lower()
+            if raw not in {"true", "false"}:
+                raise ValueError(f"True/False evaluator must return 'true' or 'false', got '{raw}'")
+            score_value = raw
+        else:
+            try:
+                numeric_value = float(unvalidated_score.raw_score_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Float scale evaluator must return a numeric score in [0, 1], got '{unvalidated_score.raw_score_value}'"
+                ) from exc
+            if not 0.0 <= numeric_value <= 1.0:
+                raise ValueError(
+                    f"Float scale evaluator must return value between 0 and 1, got {numeric_value}"
+                )
+            score_value = str(numeric_value)
+
+        expected_output = (
+            unvalidated_score.expected_output
+            if unvalidated_score.expected_output is not None
+            else request_piece.expected_output
+        )
+
+        score = Score(
+            id=unvalidated_score.id,
+            score_value=score_value,
+            score_value_description=unvalidated_score.score_value_description,
+            score_type=self.scorer_type,
+            score_category=unvalidated_score.score_category,
+            score_rationale=unvalidated_score.score_rationale,
+            score_metadata=unvalidated_score.score_metadata,
+            scorer_class_identifier=unvalidated_score.scorer_class_identifier,
+            prompt_request_response_id=unvalidated_score.prompt_request_response_id,
+            expected_output=expected_output,
             scorer_role=self.scorer_role,
+            timestamp=unvalidated_score.timestamp,
+            objective=unvalidated_score.objective,
         )
 
         return [score]
 
-
-    def validate(self, request_response: PromptRequestPiece, *, task: Optional[str] = None):
-        pass
+    def validate_return_scores(self, scores: List[Score]):
+        """
+        Ensure all scores produced by the evaluator match the configured scorer_type.
+        """
+        for score in scores:
+            if score.score_type != self.scorer_type:
+                raise ValueError(
+                    f"Evaluator configured for '{self.scorer_type}' returned score of type '{score.score_type}'"
+                )
+            # Trigger built-in validation for the score value
+            score.get_value()
