@@ -80,12 +80,13 @@ class PromptMemoryEntry(Base):
             Can be the same number for multi-part requests or multi-part responses.
         timestamp (DateTime): The timestamp of the memory entry.
         labels (Dict[str, str]): The labels associated with the memory entry. Several can be standardized.
+        targeted_harm_categories (List[str]): The targeted harm categories for the memory entry.
         prompt_metadata (JSON): The metadata associated with the prompt. This can be specific to any scenarios.
             Because memory is how components talk with each other, this can be component specific.
             e.g. the URI from a file uploaded to a blob store, or a document type you want to upload.
         converters (list[PromptConverter]): The converters for the prompt.
         prompt_target (PromptTarget): The target for the prompt.
-        orchestrator_identifier (Dict[str, str]): The orchestrator identifier for the prompt.
+        attack_identifier (Dict[str, str]): The attack identifier for the prompt.
         original_value_data_type (PromptDataType): The data type of the original prompt (text, image)
         original_value (str): The text of the original prompt. If prompt is an image, it's a link.
         original_value_sha256 (str): The SHA256 hash of the original prompt data.
@@ -108,9 +109,10 @@ class PromptMemoryEntry(Base):
     timestamp = mapped_column(DateTime, nullable=False)
     labels: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_metadata: Mapped[dict[str, Union[str, int]]] = mapped_column(JSON)
+    targeted_harm_categories: Mapped[Optional[List[str]]] = mapped_column(JSON)
     converter_identifiers: Mapped[Optional[List[dict[str, str]]]] = mapped_column(JSON)
     prompt_target_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    orchestrator_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
+    attack_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     response_error: Mapped[Literal["blocked", "none", "processing", "unknown"]] = mapped_column(String, nullable=True)
 
     original_value_data_type: Mapped[Literal["text", "image_path", "audio_path", "url", "error"]] = mapped_column(
@@ -145,9 +147,10 @@ class PromptMemoryEntry(Base):
         self.timestamp = entry.timestamp
         self.labels = entry.labels
         self.prompt_metadata = entry.prompt_metadata
+        self.targeted_harm_categories = entry.targeted_harm_categories
         self.converter_identifiers = entry.converter_identifiers
         self.prompt_target_identifier = entry.prompt_target_identifier
-        self.orchestrator_identifier = entry.orchestrator_identifier
+        self.attack_identifier = entry.attack_identifier
 
         self.original_value = entry.original_value
         self.original_value_data_type = entry.original_value_data_type  # type: ignore
@@ -173,9 +176,10 @@ class PromptMemoryEntry(Base):
             sequence=self.sequence,
             labels=self.labels,
             prompt_metadata=self.prompt_metadata,
+            targeted_harm_categories=self.targeted_harm_categories,
             converter_identifiers=self.converter_identifiers,
             prompt_target_identifier=self.prompt_target_identifier,
-            orchestrator_identifier=self.orchestrator_identifier,
+            attack_identifier=self.attack_identifier,
             original_value_data_type=self.original_value_data_type,
             converted_value_data_type=self.converted_value_data_type,
             response_error=self.response_error,
@@ -226,15 +230,16 @@ class ScoreEntry(Base):  # type: ignore
     score_value = mapped_column(String, nullable=False)
     score_value_description = mapped_column(String, nullable=True)
     score_type: Mapped[Literal["true_false", "float_scale"]] = mapped_column(String, nullable=False)
-    score_category = mapped_column(String, nullable=True)
+    score_category: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
-    score_metadata = mapped_column(String, nullable=True)
+    score_metadata: Mapped[dict[str, Union[str, int]]] = mapped_column(JSON)
     scorer_class_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
     prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=False)
     expected_output = mapped_column(String, nullable=True)
     scorer_role = mapped_column(String, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
-    task = mapped_column(String, nullable=True)
+    task = mapped_column(String, nullable=True)  # Deprecated: Use objective instead
+    objective = mapped_column(String, nullable=True)
     prompt_request_piece: Mapped["PromptMemoryEntry"] = relationship("PromptMemoryEntry", back_populates="scores")
 
     def __init__(self, *, entry: Score):
@@ -250,7 +255,10 @@ class ScoreEntry(Base):  # type: ignore
         self.expected_output = entry.expected_output
         self.scorer_role = entry.scorer_role
         self.timestamp = entry.timestamp
-        self.task = entry.task
+        # Store in both columns for backward compatibility
+        # New code should only read from objective
+        self.task = entry.objective
+        self.objective = entry.objective
 
     def get_score(self) -> Score:
         return Score(
@@ -266,7 +274,7 @@ class ScoreEntry(Base):  # type: ignore
             expected_output=self.expected_output,
             scorer_role=self.scorer_role,
             timestamp=self.timestamp,
-            task=self.task,
+            objective=self.objective,
         )
 
     def to_dict(self) -> dict:
@@ -283,7 +291,7 @@ class ScoreEntry(Base):  # type: ignore
             "expected_output": self.expected_output,
             "scorer_role": self.scorer_role,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "task": self.task,
+            "objective": self.objective,
         }
 
 

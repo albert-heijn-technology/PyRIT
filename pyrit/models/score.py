@@ -4,7 +4,7 @@
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Literal, Optional, get_args
+from typing import Dict, List, Literal, Optional, Union, get_args
 
 ScoreType = Literal["true_false", "float_scale"]
 
@@ -22,15 +22,14 @@ class Score:
     # The type of the scorer; e.g. "true_false" or "float_scale"
     score_type: ScoreType
 
-    # The type of the harms category (e.g. "hate" or "violence")
-    score_category: Optional[str]
+    # The harms categories (e.g. ["hate", "violence"]) – can be multiple
+    score_category: Optional[List[str]]
 
     # Extra data the scorer provides around the rationale of the score
     score_rationale: str
 
-    # Custom metadata a scorer might use. This is left undefined other than for the
-    # specific scorer that uses it.
-    score_metadata: str
+    # Custom metadata a scorer might use. This can vary by scorer.
+    score_metadata: Optional[Dict[str, Union[str, int]]]
 
     # The identifier of the scorer class, including relevant information
     # e.g. {"scorer_name": "SelfAskScorer", "classifier": "current_events.yml"}
@@ -59,13 +58,13 @@ class Score:
         score_value: str,
         score_value_description: str,
         score_type: ScoreType,
-        score_category: Optional[str] = None,
+        score_category: Optional[List[str]] = None,
         score_rationale: str,
-        score_metadata: str,
+        score_metadata: Optional[Dict[str, Union[str, int]]],
         prompt_request_response_id: str | uuid.UUID,
         scorer_class_identifier: Optional[Dict[str, str]] = None,
         timestamp: Optional[datetime] = None,
-        task: Optional[str] = None,
+        objective: Optional[str] = None,
         expected_output: Optional[str] = None,
         scorer_role: Optional[str] = None,
     ):
@@ -86,9 +85,9 @@ class Score:
         self.score_metadata = score_metadata
         self.scorer_class_identifier = scorer_class_identifier or {}
         self.prompt_request_response_id = prompt_request_response_id
+        self.objective = objective
         self.expected_output = expected_output
         self.scorer_role = scorer_role
-        self.task = task
 
     def get_value(self):
         """
@@ -137,11 +136,11 @@ class Score:
             "expected_output": self.expected_output,
             "scorer_role": self.scorer_role,
             "timestamp": self.timestamp.isoformat(),
-            "task": self.task,
+            "objective": self.objective,
         }
 
     def __str__(self):
-        category_str = f": {self.score_category or ''}"
+        category_str = f": {', '.join(self.score_category) if self.score_category else ''}"
         if self.scorer_class_identifier:
             return f"{self.scorer_class_identifier['__type__']}{category_str}: {self.score_value}"
         return f"{category_str}: {self.score_value}"
@@ -160,13 +159,12 @@ class UnvalidatedScore:
     raw_score_value: str
 
     score_value_description: str
-    score_type: ScoreType
-    score_category: Optional[str]
+    score_category: Optional[List[str]]
     score_rationale: str
-    score_metadata: str
+    score_metadata: Optional[Dict[str, Union[str, int]]]
     scorer_class_identifier: Dict[str, str]
     prompt_request_response_id: uuid.UUID | str
-    task: str
+    objective: Optional[str]
     id: Optional[uuid.UUID | str] = None
     expected_output: Optional[str] = None
     scorer_role: Optional[str] = None
@@ -177,7 +175,7 @@ class UnvalidatedScore:
             id=self.id,
             score_value=score_value,
             score_value_description=self.score_value_description,
-            score_type=self.score_type,
+            score_type=score_type,
             score_category=self.score_category,
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
@@ -186,5 +184,5 @@ class UnvalidatedScore:
             expected_output=expected_output,
             scorer_role=scorer_role,
             timestamp=self.timestamp,
-            task=self.task,
+            objective=self.objective,
         )

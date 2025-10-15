@@ -89,8 +89,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
 
         self._auxiliary_scorers = attack_scoring_config.auxiliary_scorers
         self._objective_scorer = attack_scoring_config.objective_scorer
-        if self._objective_scorer and self._objective_scorer.scorer_type != "true_false" and self._objective_scorer.scorer_type != "float_scale":
-            raise ValueError(f"Objective scorer must be a true/false or float scale scorer. Got: {self._objective_scorer.scorer_type}")
 
         # Skip criteria could be set directly in the injected prompt normalizer
         self._prompt_normalizer = prompt_normalizer or PromptNormalizer()
@@ -261,6 +259,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 if "conversation" in qa:
                     conversation_id = str(uuid.uuid4())
                     is_thread_id_set = False
+                    last_result: Optional[AttackResult] = None
 
                     for idx, turn in enumerate(qa["conversation"]):
                         prompt_text = turn["question"]
@@ -277,6 +276,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                             metadata=metadata if metadata else None,
                         )
                         result = await self.execute_with_context_async(context=context)
+                        last_result = result
                         prompt_response = result.last_response if result else None
 
                         # Inject thread ID once if present in first assistant response
@@ -291,11 +291,10 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                             else:
                                 print("Thread ID not found in first turn's response. Aborting this conversation.")
                                 break
-
-                        # We only need one result per conversation, after last turn (if thread set)
-                        if idx == len(qa["conversation"]) - 1 and is_thread_id_set:
-                            results.append(result)
                         await asyncio.sleep(1)
+
+                    if last_result is not None:
+                        results.append(last_result)
                 else:
                     # Single-turn QA
                     single_turn_objectives.append(qa["question"])
@@ -418,10 +417,15 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             request_converter_configurations=self._request_converters,
             response_converter_configurations=self._response_converters,
             labels=context.memory_labels,  # combined with strategy labels at _setup()
-            orchestrator_identifier=self.get_identifier(),
+            attack_identifier=self.get_identifier(),
         )
 
-    async def _evaluate_response_async(self, *, response: PromptRequestResponse, objective: str) -> Optional[Score]:
+    async def _evaluate_response_async(
+        self,
+        *,
+        response: PromptRequestResponse,
+        objective: str,
+    ) -> Optional[Score]:
         """
         Evaluate the response against the objective using the configured scorers.
 
@@ -437,16 +441,19 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 no objective scorer is set. Note that auxiliary scorer results are not returned
                 but are still executed and stored.
         """
-        scoring_results = await Scorer.score_response_with_objective_async(
+
+        scoring_results = await Scorer.score_response_async(
             response=response,
+            objective_scorer=self._objective_scorer,
             auxiliary_scorers=self._auxiliary_scorers,
-            objective_scorers=[self._objective_scorer] if self._objective_scorer else None,
             role_filter="assistant",
-            task=objective,
+            objective=objective,
         )
+
+        if not self._objective_scorer:
+            return None
 
         objective_scores = scoring_results["objective_scores"]
         if not objective_scores:
             return None
-
         return objective_scores[0]
