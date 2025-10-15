@@ -588,34 +588,28 @@ class Scorer(abc.ABC):
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
             return result
-        
-        has_auxiliary = auxiliary_scorers is not None
-        has_objective = objective_scorers is not None
+        has_auxiliary = bool(auxiliary_scorers)
 
-        # Set the scorer roles of the scorers here
         if has_auxiliary:
-            for scorer in auxiliary_scorers:
+            for scorer in auxiliary_scorers or []:
                 scorer.scorer_role = "auxiliary"
-        if has_objective:
-            for scorer in objective_scorers:
-                scorer.scorer_role = "objective"
+        objective_scorer.scorer_role = "objective"
 
-        # Run both types of scoring concurrently if both are present
-        if has_auxiliary and has_objective:
-            auxiliary_task = Scorer.score_response_multiple_scorers_async(
+        if has_auxiliary:
+            auxiliary_coro = Scorer.score_response_multiple_scorers_async(
                 response=response,
-                scorers=auxiliary_scorers,
+                scorers=auxiliary_scorers or [],
                 role_filter=role_filter,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
             )
-            obj_task = objective_scorer.score_async(
+            objective_coro = objective_scorer.score_async(
                 request_response=response,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
             )
-            aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
+            aux_scores, obj_scores = await asyncio.gather(auxiliary_coro, objective_coro)
             result["auxiliary_scores"] = aux_scores
             result["objective_scores"] = obj_scores
         else:
