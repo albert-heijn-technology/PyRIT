@@ -2,46 +2,66 @@ import json
 from typing import Any, ClassVar, Dict, List, Optional
 
 from pyrit.models import PromptRequestPiece, Score
-from pyrit.score import Scorer
+from pyrit.score import Scorer, ScorerPromptValidator
 
 
 class SimpleTextLengthScorer(Scorer):
-    scorer_type = "float_scale"  # since output is a float between 0 and 1
+    """Assigns a float score based on whether the response stays within a maximum length."""
 
+    scorer_type = "float_scale"
     _summary_printed: ClassVar[bool] = False
 
-    def __init__(self, max_length: int = 500):
+    _default_validator: ScorerPromptValidator = ScorerPromptValidator(
+        supported_data_types=["text"],
+        is_objective_required=False,
+    )
+
+    def __init__(self, max_length: int = 500, *, validator: Optional[ScorerPromptValidator] = None):
+        super().__init__(validator=validator or self._default_validator)
         self.max_length = max_length
         self.__class__._summary_printed = False
 
     def validate(self, request_response: PromptRequestPiece, *, task: Optional[str] = None):
-        # Ensure original_value is a string
         if not isinstance(request_response.original_value, str):
             raise ValueError("SimpleTextLengthScorer requires original_value to be a string.")
 
-    async def _score_async(
-        self, request_response: PromptRequestPiece, *, task: Optional[str] = None
+    async def _score_piece_async(
+        self,
+        request_piece: PromptRequestPiece,
+        *,
+        objective: Optional[str] = None,
     ) -> List[Score]:
-        self.validate(request_response, task=task)
+        self.validate(request_piece, task=objective)
 
-        text = request_response.converted_value or ""
+        text = request_piece.converted_value or ""
         length = len(text)
         normalized_score = 1.0 if length <= self.max_length else 0.0
 
+        metadata = {"length": length, "max_length": self.max_length}
+
         score = Score(
-            score_value=normalized_score,
-            score_category="text_length",
+            score_value=str(normalized_score),
+            score_category=["text_length"],
             score_rationale=f"Text length is {length} characters, normalized to {normalized_score:.2f}",
             score_type=self.scorer_type,
-            prompt_request_response_id=request_response.id,
-            task=task,
-            score_metadata=json.dumps({"length": length, "max_length": self.max_length}),
-            score_value_description=None,
+            prompt_request_response_id=request_piece.id,
+            score_metadata=metadata,
+            score_value_description="Normalized text length",
             scorer_role=self.scorer_role,
             scorer_class_identifier=self.get_identifier(),
+            objective=objective,
+            expected_output=request_piece.expected_output,
         )
 
         return [score]
+
+    def validate_return_scores(self, scores: List[Score]) -> None:
+        for score in scores:
+            if score.score_type != self.scorer_type:
+                raise ValueError("SimpleTextLengthScorer returned a score with an unexpected type.")
+            value = float(score.score_value)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("SimpleTextLengthScorer score must be between 0 and 1.")
 
     @classmethod
     def on_run_complete(
