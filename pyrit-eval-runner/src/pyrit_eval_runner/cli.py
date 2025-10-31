@@ -92,32 +92,16 @@ def _normalise_evaluator_entry(entry: Any) -> Dict[str, Any]:
     raise ValueError("Evaluator entries must be strings or mappings containing a 'path'")
 
 
-def _collect_evaluator_paths(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    env_multi = os.getenv("PYRIT_EVALUATOR_PATHS")
-    if env_multi:
-        parts = _split_path_list(env_multi)
-        if parts:
-            return [{"path": part} for part in parts]
-        raise ValueError("PYRIT_EVALUATOR_PATHS is set but empty")
+def _collect_evaluator_paths(scorer_raw: Dict[str, Any]) -> List[Dict[str, Any]]:
+    main_normalized = _normalise_evaluator_entry(scorer_raw.get('main'))
+    print('Normalized main scorer entry:', main_normalized)
+    scorer_raw.get('auxiliary')
+    auxiliaries_raw = scorer_raw.get("auxiliary", [])
+    if not isinstance(auxiliaries_raw, list):
+        raise ValueError("evaluator_paths auxiliary entry must be a list")
+    auxiliaries_normalized = [_normalise_evaluator_entry(entry) for entry in auxiliaries_raw]
 
-    env_single = os.getenv("PYRIT_EVALUATOR_PATH")
-    if env_single:
-        return [{"path": env_single}]
-
-    cfg_multi = cfg.get("evaluator_paths")
-    if cfg_multi is not None:
-        if not isinstance(cfg_multi, list):
-            raise ValueError("Config key 'evaluator_paths' must be a list")
-        entries = [_normalise_evaluator_entry(item) for item in cfg_multi]
-        if not entries:
-            raise ValueError("Config key 'evaluator_paths' must contain at least one entry")
-        return entries
-
-    cfg_single = cfg.get("evaluator_path")
-    if cfg_single:
-        return [_normalise_evaluator_entry(cfg_single)]
-
-    return []
+    return [main_normalized] + auxiliaries_normalized
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -193,6 +177,16 @@ def inject_thread_id(raw_http_request: str, thread_id: str, key: str = "threadId
 async def run_async(args: argparse.Namespace) -> int:
     _setup_logging()
 
+    dataset_path_raw = _resolve_required_setting(args.dataset_path, "DATASET_PATH")
+    # Resolve paths with overrides (flag > env > yaml)
+    if not dataset_path_raw:
+        _fail("Config must include dataset_path (or override via flags/env)")
+
+    dataset_path = Path(dataset_path_raw)
+    print('The resolved dataset path is:', dataset_path)
+    if not dataset_path or not dataset_path.exists():
+        _fail(f"Dataset file not found: {dataset_path}")
+
     # Env requirements for HTTP templating
     base_url = _resolve_required_setting(args.target_endpoint, "TARGET_ENDPOINT")
     token = _resolve_required_setting(args.auth_token, "AUTH_TOKEN")
@@ -218,22 +212,23 @@ async def run_async(args: argparse.Namespace) -> int:
     cfg_dir = cfg_path.parent
     cfg = _load_yaml(cfg_path)
 
-    # Resolve paths with overrides (flag > env > yaml)
-    dataset_path = os.getenv("PYRIT_DATASET_PATH") or cfg.get("dataset_path")
-    if not dataset_path:
-        _fail("Config must include dataset_path (or override via flags/env)")
+    scorer_str = _resolve_required_setting(args.scorer, "SCORER")
+    # Parse the JSON string
+    try:
+        scorer_json = json.loads(scorer_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON for --scorer: {e}")
+
 
     try:
-        evaluator_paths = _collect_evaluator_paths(cfg)
+        evaluator_paths = _collect_evaluator_paths(scorer_json)
     except ValueError as exc:
         _fail(str(exc))
 
+    # TODO(FmaDevMode): Continue by also testing if auxiliary scorers are provided correctly.
+    print('Eval paths collected:', evaluator_paths)
     if not evaluator_paths:
         _fail("Config must include evaluator_paths (or override via env)")
-
-    dataset_path_p = _resolve_path(cfg_dir, dataset_path)
-    if not dataset_path_p or not dataset_path_p.exists():
-        _fail(f"Dataset file not found: {dataset_path_p}")
 
     evaluator_entries: List[Dict[str, Any]] = []
     seen_evaluators: Dict[Any, str] = {}
@@ -455,8 +450,7 @@ async def run_async(args: argparse.Namespace) -> int:
             else:
                 raise ValueError(f"Unknown test case format in entry: {entry}")
         return qa_pairs_local
-
-    qa_pairs = _load_test_data(dataset_path_p)
+    qa_pairs = _load_test_data(dataset_path)
 
     # No sharding/max-examples: run all dataset examples
 
@@ -501,7 +495,7 @@ async def run_async(args: argparse.Namespace) -> int:
     report_payload = {
         "report_threshold": report_threshold,
         "execution_time_seconds": elapsed,
-        "dataset_path": str(dataset_path_p) if dataset_path_p else None,
+        "dataset_path": str(dataset_path) if dataset_path else None,
         "output_directory": str(out_dir),
         "report_html": str(out_dir / "dataset_report.html"),
         "scorer_weights": scorer_weight_map,
