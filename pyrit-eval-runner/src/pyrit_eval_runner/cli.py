@@ -549,26 +549,35 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="Run evaluations", description="Run evaluations")
+    # TODO(FmaDevMode): Remove this --command, only needed temporarily to run locally
+    run.add_argument("--command", required=True, help="Temp, should be removed before merge / deploy. If here, please remove this code")
     run.add_argument("--config", required=True, help="Path to Repo-B YAML config")
-    run.add_argument("--out", default="pyrit_reports", help="Output directory")
+    run.add_argument("--scorer", required=True, help="The json object defining the main and auxiliary scorer paths")
+    run.add_argument("--dataset-path", required=True, help="Path to the dataset YAML file")
+    run.add_argument("--out", required=True, default="pyrit_reports", help="Output directory")
     run.add_argument(
         "--target-endpoint",
+        required=True,
         help="API base URL (overrides TARGET_ENDPOINT)",
     )
     run.add_argument(
         "--auth-token",
+        required=True,
         help="Authentication token (overrides AUTH_TOKEN)",
     )
     run.add_argument(
         "--openai-api-key",
+        required=True,
         help="OpenAI API key (overrides OPENAI_API_KEY)",
     )
     run.add_argument(
         "--openai-chat-endpoint",
+        required=True,
         help="OpenAI chat endpoint (overrides OPENAI_CHAT_ENDPOINT)",
     )
     run.add_argument(
         "--openai-chat-model",
+        required=True,
         help="OpenAI chat model (overrides OPENAI_CHAT_MODEL)",
     )
 
