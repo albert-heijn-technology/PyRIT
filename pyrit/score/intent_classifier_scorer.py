@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 import logging
@@ -5,7 +6,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 
 import aiohttp
 from pyrit.score import Scorer, ScorerPromptValidator
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, Score
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ class IntentClassifierScorer(Scorer):
             self.__class__._summary_data["missing_expected"] += 1
             raise ValueError("IntentClassifierScorer requires expected_output to contain the intent string.")
 
-        actual_intent = self._extract_actual_intent(getattr(message_piece, "converted_value", None))
+        actual_intent, intent_source = await self._determine_actual_intent(message_piece)
 
         self.__class__._summary_data["total"] += 1
 
@@ -93,7 +94,7 @@ class IntentClassifierScorer(Scorer):
 
         if message_piece.id is None:
             raise ValueError("MessagePiece must have a non-null id to create a Score.")
-        
+
         score = Score(
             score_value=str(1.0 if matched else 0.0),
             score_category=["intent_classification"],
@@ -125,7 +126,18 @@ class IntentClassifierScorer(Scorer):
         row = cls._confusion_matrix.setdefault(expected, {})
         row[actual_label] = row.get(actual_label, 0) + 1
 
-    async def _resolve_actual_intent(self, request_piece: PromptRequestPiece) -> tuple[Optional[str], str]:
+    async def _determine_actual_intent(self, message_piece: MessagePiece) -> tuple[Optional[str], str]:
+        local_intent = self._extract_actual_intent(message_piece.converted_value)
+        if local_intent:
+            return local_intent, "local"
+
+        if not self._intent_service_url:
+            return None, "local_missing"
+
+        remote_intent, intent_source = await self._resolve_actual_intent(message_piece)
+        return remote_intent, intent_source
+
+    async def _resolve_actual_intent(self, request_piece: MessagePiece) -> tuple[Optional[str], str]:
         if not self._intent_service_url:
             raise ValueError("IntentClassifierScorer requires intent_service_url to retrieve intents.")
 
@@ -146,10 +158,10 @@ class IntentClassifierScorer(Scorer):
 
     async def _fetch_intent_from_service(self, *, thread_id: str) -> Optional[str]:
         url = self._intent_service_url
-        if "{thread_id}" in url:
+        if url and "{thread_id}" in url:
             url = url.format(thread_id=thread_id)
         else:
-            separator = "&" if "?" in url else "?"
+            separator = "&" if url and "?" in url else "?"
             url = f"{url}{separator}threadId={thread_id}"
 
         timeout = aiohttp.ClientTimeout(total=self._intent_service_timeout)
@@ -168,6 +180,33 @@ class IntentClassifierScorer(Scorer):
 
         candidate = payload.get(self._intent_response_key) or payload.get("intent")
         return self._coerce_to_string(candidate)
+
+    def _extract_actual_intent(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            candidate = value.get("intent") or value.get("Intent")
+            return self._coerce_to_string(candidate)
+        if not isinstance(value, str):
+            return self._extract_actual_intent(str(value))
+
+        raw = value.strip()
+        if not raw:
+            return None
+
+        if raw.startswith("{"):
+            payload: Dict[str, Any] = {}
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                try:
+                    payload = ast.literal_eval(raw)
+                except (ValueError, SyntaxError):
+                    payload = {}
+            if isinstance(payload, dict):
+                return self._extract_actual_intent(payload)
+
+        return self._coerce_to_string(raw)
 
     def _coerce_to_string(self, value: Any) -> Optional[str]:
         if value is None:
