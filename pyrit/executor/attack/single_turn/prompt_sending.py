@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-
+import asyncio
 import logging
 import uuid
-from typing import Optional
+from typing import Optional, List, Dict, Any, Callable
 
 from pyrit.common.apply_defaults import apply_defaults
 from pyrit.common.utils import combine_dict, warn_if_set
@@ -57,7 +57,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         attack_converter_config: Optional[AttackConverterConfig] = None,
         attack_scoring_config: Optional[AttackScoringConfig] = None,
         prompt_normalizer: Optional[PromptNormalizer] = None,
-        max_attempts_on_failure: int = 0,
+        max_attempts_on_failure: int = 0
     ) -> None:
         """
         Initialize the prompt injection attack strategy.
@@ -126,7 +126,11 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             context (SingleTurnAttackContext): The attack context containing attack parameters.
         """
         # Ensure the context has a conversation ID
-        context.conversation_id = str(uuid.uuid4())
+        if not context.conversation_id:
+            self._logger.debug("No conversation ID provided, generating a new one")
+            # Generate a new conversation ID if not provided
+            # This is useful for single-turn attacks where we don't have an existing conversation
+            context.conversation_id = str(uuid.uuid4())
 
         # Combine memory labels from context and attack strategy
         context.memory_labels = combine_dict(self._memory_labels, context.memory_labels)
@@ -154,10 +158,6 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         self._logger.info(f"Starting {self.__class__.__name__} with objective: {context.objective}")
         self._logger.info(f"Max attempts: {self._max_attempts_on_failure}")
 
-        # Execute with retries
-        response = None
-        score = None
-
         # Attack execution steps:
         # 1) Construct the seed prompt(s) that will be injected into the conversation
         # 2) Send the prompt to the target model using the prompt normalizer helper
@@ -170,36 +170,17 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Prepare the prompt
         prompt_group = self._get_prompt_group(context)
 
-        # Execute with retries
-        for attempt in range(self._max_attempts_on_failure + 1):
-            self._logger.debug(f"Attempt {attempt+1}/{self._max_attempts_on_failure + 1}")
+        # Send the prompt
+        response = await self._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=context)
 
-            # Send the prompt
-            response = await self._send_prompt_to_objective_target_async(prompt_group=prompt_group, context=context)
-            if not response:
-                self._logger.warning(f"No response received on attempt {attempt+1} (likely filtered)")
-                continue  # Retry if no response (filtered or error)
+        # Add expected output to the response piece if provided
+        if context.expected_output is not None:
+            piece = response.message_pieces[0]
+            piece.expected_output = context.expected_output
+            response.message_pieces = [piece]
 
-            # Score the response including auxiliary and objective scoring
-            score = await self._evaluate_response_async(response=response, objective=context.objective)
-
-            # If there is no objective, we have a response but can't determine success
-            if not self._objective_scorer:
-                break
-
-            # On success, return immediately
-            if bool(score and score.get_value()):
-                break
-
-            # On failure, store and create new conversation if there are more attempts remaining
-            if attempt < self._max_attempts_on_failure:
-                context.related_conversations.add(
-                    ConversationReference(
-                        conversation_id=context.conversation_id,
-                        conversation_type=ConversationType.PRUNED,
-                    )
-                )
-                await self._setup_async(context=context)  # Reset conversation for next attempt
+        # Score the response including auxiliary and objective scoring
+        score = await self._evaluate_response_async(response=response, objective=context.objective)
 
         # Determine the outcome
         outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
@@ -214,9 +195,142 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             outcome=outcome,
             outcome_reason=outcome_reason,
             executed_turns=1,
+            metadata=context.metadata.copy() if isinstance(context.metadata, dict) else {},
         )
 
         return result
+
+    async def _perform_batch_attack_async(
+            self,
+            *,
+            attack_contexts: list[SingleTurnAttackContext]
+    ) -> list[AttackResult]:
+        """
+        Perform a batch of single-turn attacks concurrently.
+
+        Args:
+            attack_contexts (list[SingleTurnAttackContext]): List of contexts for each attack.
+
+        Returns:
+            list[AttackResult]: List of results for each attack.
+        """
+        tasks = [
+            self.execute_with_context_async(context=context)
+            for context in attack_contexts
+        ]
+        return await asyncio.gather(*tasks)
+
+    # Supports both multi-turn and single-turn QA input for direct attack usage.
+    async def perform_dataset_attack(
+            self,
+            qa_pairs: List[Dict[str, Any]],
+            thread_id_injector: Optional[Callable[[str, str], str]] = None,
+            thread_count: int = 3
+    ) -> Any:
+        """
+        Executes a batch of QA pairs (multi-turn or single-turn).
+        Supports thread ID injection for HTTP-based targets if a thread_id_injector is provided.
+
+        Args:
+            qa_pairs: List of QA dicts with either 'question'/'expected_outcome' (single-turn) or 'conversation' (multi-turn)
+            thread_id_injector: Callable for HTTP thread ID injection (optional)
+
+        Returns:
+            List of results, one per input QA/conversation.
+        """
+        single_turn_objectives = []
+        single_turn_expected_outputs = []
+        single_turn_metadata: List[Optional[Dict[str, Any]]] = []
+        had_http_request_attr = hasattr(self._objective_target, "http_request")
+        start_request_copy = getattr(self._objective_target, "http_request", None)
+        results = []
+
+        try:
+            for i, qa in enumerate(qa_pairs):
+                if had_http_request_attr:
+                    self._objective_target.http_request = start_request_copy
+
+                test_case_id = qa.get("test_case_id")
+                base_metadata: Dict[str, Any] = {}
+                entry_metadata = qa.get("metadata")
+                if isinstance(entry_metadata, dict):
+                    base_metadata.update(entry_metadata)
+                if test_case_id is not None:
+                    base_metadata["test_case_id"] = test_case_id
+
+                if "conversation" in qa:
+                    conversation_id = str(uuid.uuid4())
+                    is_thread_id_set = False
+                    last_result: Optional[AttackResult] = None
+
+                    for idx, turn in enumerate(qa["conversation"]):
+                        prompt_text = turn["question"]
+                        expected_output = turn.get("expected_outcome")
+
+                        metadata = dict(base_metadata)
+
+                        context = SingleTurnAttackContext(
+                            objective=prompt_text,
+                            prepended_conversation=[],
+                            memory_labels={},
+                            conversation_id=conversation_id,
+                            expected_output=expected_output,
+                            metadata=metadata if metadata else None,
+                        )
+                        result = await self.execute_with_context_async(context=context)
+                        last_result = result
+                        prompt_response = result.last_response if result else None
+
+                        # Inject thread ID once if present in first assistant response
+                        if idx == 0 and not is_thread_id_set and thread_id_injector:
+                            if prompt_response:
+                                thread_id = getattr(prompt_response, "prompt_metadata", {}).get("thread_id")
+                                if thread_id and hasattr(self._objective_target, "http_request"):
+                                    self._objective_target.http_request = thread_id_injector(
+                                        self._objective_target.http_request, thread_id
+                                    )
+                                    is_thread_id_set = True
+                            else:
+                                print("Thread ID not found in first turn's response. Aborting this conversation.")
+                                break
+                        await asyncio.sleep(1)
+
+                    if last_result is not None:
+                        results.append(last_result)
+                else:
+                    # Single-turn QA
+                    single_turn_objectives.append(qa["question"])
+                    single_turn_expected_outputs.append(qa.get("expected_outcome"))
+                    single_turn_metadata.append(dict(base_metadata) if base_metadata else None)
+
+            if single_turn_objectives:
+                semaphore = asyncio.Semaphore(thread_count)
+
+                async def single_turn_task(obj, exp, idx, meta):
+                    async with semaphore:
+                        run_context = SingleTurnAttackContext(
+                            objective=obj,
+                            prepended_conversation=[],
+                            memory_labels={},
+                            expected_output=exp,
+                            conversation_id=str(uuid.uuid4()),
+                            metadata=dict(meta) if meta else None,
+                        )
+                        return await self.execute_with_context_async(context=run_context)
+
+                tasks = [
+                    asyncio.create_task(single_turn_task(obj, exp, idx, meta))
+                    for idx, (obj, exp, meta) in enumerate(
+                        zip(single_turn_objectives, single_turn_expected_outputs, single_turn_metadata)
+                    )
+                ]
+                batch_results = await asyncio.gather(*tasks)
+                results.extend(batch_results)
+
+            return results
+        finally:
+            if had_http_request_attr:
+                self._objective_target.http_request = start_request_copy
 
     def _determine_attack_outcome(
         self, *, response: Optional[Message], score: Optional[Score], context: SingleTurnAttackContext
@@ -236,9 +350,18 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             # No scorer means we can't determine success/failure
             return AttackOutcome.UNDETERMINED, "No objective scorer configured"
 
-        if score and score.get_value():
-            # We have a positive score, so it's a success
-            return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+        if score.score_type == "true_false" and score.get_value() is not None:
+            # If the score is a true/false type and has a value, we can determine success
+            if score.get_value():
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            else:
+                return AttackOutcome.FAILURE, "Objective not achieved according to scorer"
+        elif score.score_type == "float_scale" and score.get_value() is not None:
+            # If the score is a float scale type and has a value, we can determine success
+            if score.get_value() >= 0.5: # Todo: Use a configurable threshold
+                return AttackOutcome.SUCCESS, "Objective achieved according to scorer"
+            else:
+                return AttackOutcome.FAILURE, "Objective not achieved according to scorer"
 
         if response:
             # We got response(s) but none achieved the objective

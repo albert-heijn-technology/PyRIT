@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, Dict, Optional, TypeVar, List
 
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.message_piece import MessagePiece
@@ -28,7 +28,6 @@ class AttackOutcome(Enum):
 
     # The outcome of the attack is unknown or could not be determined
     UNDETERMINED = "undetermined"
-
 
 @dataclass
 class AttackResult(StrategyResult):

@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
-
+from pyrit.score.evaluator import Evaluator
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -89,6 +89,7 @@ __all__ = [
     "PromptShieldScorer",
     "QuestionAnswerScorer",
     "Scorer",
+    "Evaluator",
     "ScorerEvaluator",
     "ScorerMetrics",
     "ScorerPromptValidator",

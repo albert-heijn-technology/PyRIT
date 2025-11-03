@@ -143,11 +143,12 @@ class PromptMemoryEntry(Base):
 
     original_prompt_id = mapped_column(CustomUUID, nullable=False)
 
-    scores: Mapped[List["ScoreEntry"]] = relationship(
+    scores: Mapped[list["ScoreEntry"]] = relationship(
         "ScoreEntry",
-        primaryjoin="ScoreEntry.prompt_request_response_id == PromptMemoryEntry.original_prompt_id",
         back_populates="prompt_request_piece",
-        foreign_keys="ScoreEntry.prompt_request_response_id",
+        cascade="all, delete-orphan",
+        single_parent=True,     # required for delete-orphan on parent side
+        lazy="selectin",        # efficient eager loading
     )
 
     def __init__(self, *, entry: MessagePiece):
@@ -246,7 +247,9 @@ class ScoreEntry(Base):  # type: ignore
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, Union[str, int]]] = mapped_column(JSON)
     scorer_class_identifier: Mapped[dict[str, str]] = mapped_column(JSON)
-    prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    message_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), nullable=False)
+    expected_output = mapped_column(String, nullable=True)
+    scorer_role = mapped_column(String, nullable=True)
     timestamp = mapped_column(DateTime, nullable=False)
     task = mapped_column(String, nullable=True)  # Deprecated: Use objective instead
     objective = mapped_column(String, nullable=True)
@@ -261,7 +264,9 @@ class ScoreEntry(Base):  # type: ignore
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata
         self.scorer_class_identifier = self._normalize_scorer_identifier(entry.scorer_class_identifier)
-        self.prompt_request_response_id = entry.message_piece_id if entry.message_piece_id else None
+        self.message_id = entry.message_piece_id if entry.message_piece_id else None
+        self.expected_output = entry.expected_output
+        self.scorer_role = entry.scorer_role
         self.timestamp = entry.timestamp
         # Store in both columns for backward compatibility
         # New code should only read from objective
@@ -299,7 +304,9 @@ class ScoreEntry(Base):  # type: ignore
             score_rationale=self.score_rationale,
             score_metadata=self.score_metadata,
             scorer_class_identifier=self._denormalize_scorer_identifier(self.scorer_class_identifier),
-            message_piece_id=self.prompt_request_response_id,
+            message_piece_id=self.message_id,
+            expected_output=self.expected_output,
+            scorer_role=self.scorer_role,
             timestamp=self.timestamp,
             objective=self.objective,
         )
@@ -337,7 +344,9 @@ class ScoreEntry(Base):  # type: ignore
             "score_rationale": self.score_rationale,
             "score_metadata": self.score_metadata,
             "scorer_class_identifier": self.scorer_class_identifier,
-            "prompt_request_response_id": str(self.prompt_request_response_id),
+            "message_id": str(self.message_id),
+            "expected_output": self.expected_output,
+            "scorer_role": self.scorer_role,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "objective": self.objective,
         }

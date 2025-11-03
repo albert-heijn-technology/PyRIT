@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyrit-eval-runner"
+version = "0.1.0"
+description = "CLI to run PyRIT dataset evaluations from a YAML config"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "PyRIT Eval Runner Maintainers"}]
+dependencies = [
+  "PyYAML>=6.0",
+  "aiohttp>=3.9",
+]
+
+[project.scripts]
+pyrit-eval = "pyrit_eval_runner.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pyrit_eval_runner*"]
+exclude = []
+
