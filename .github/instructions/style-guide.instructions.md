@@ -14,11 +14,11 @@ Follow these coding standards to ensure consistent, readable, and maintainable c
 
 ```python
 # CORRECT
-async def send_prompt_async(self, prompt: str) -> PromptResponse:
+async def send_prompt_async(self, prompt: str) -> Message:
     ...
 
 # INCORRECT
-async def send_prompt(self, prompt: str) -> PromptResponse:  # Missing _async suffix
+async def send_prompt(self, prompt: str) -> Message:  # Missing _async suffix
     ...
 ```
 
@@ -230,8 +230,44 @@ from tqdm import tqdm
 
 # Local application imports
 from pyrit.attacks.base import AttackStrategy
-from pyrit.models import AttackResult, PromptResponse
+from pyrit.models import AttackResult
 from pyrit.prompt_target import PromptTarget
+```
+
+Unless necessary, always import at the top of the file. Don't import inside a function or method.
+
+
+### Import paths
+
+Often, pyrit has specific files that can be imported. However IF you are importing from a different module than your namespace,
+import from the root pyrit module if it's exposed from init.
+
+In the same module, importing from the specific path is usually necessary to prevent circular imports.
+
+- Always check __init__.py exports first - Before using a specific file path, verify if the class/function is exposed at a higher level
+- Group related imports - Put all imports from the same root module together
+- Use multi-line formatting for readability - When importing 3+ items from the same module, use parentheses
+
+
+```python
+# Correct
+from pyrit.prompt_target import PromptChatTarget, OpenAIChatTarget
+
+# Correct
+from pyrit.score import (
+    AzureContentFilterScorer,
+    FloatScaleThresholdScorer,
+    SelfAskRefusalScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
+
+# Incorrect (if importing from a non-target module)
+from pyrit.prompt_target.common.prompt_chat_target import PromptChatTarget
+from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+
 ```
 
 ## Error Handling

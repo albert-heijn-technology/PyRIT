@@ -2,7 +2,7 @@ import ast
 import json
 from typing import Any, ClassVar, Dict, List, Optional
 
-from pyrit.models import PromptRequestPiece, Score
+from pyrit.models import MessagePiece, Score
 from pyrit.score import Scorer, ScorerPromptValidator
 
 
@@ -36,24 +36,24 @@ class IntentClassifierScorer(Scorer):
         }
         cls._confusion_matrix = {}
 
-    def _validate_piece(self, request_piece: PromptRequestPiece) -> None:
+    def _validate_piece(self, request_piece: MessagePiece) -> None:
         if not isinstance(request_piece.original_value, str):
             raise ValueError("IntentClassifierScorer requires original_value to be a string.")
 
     async def _score_piece_async(
         self,
-        request_piece: PromptRequestPiece,
+        message_piece: MessagePiece,
         *,
         objective: Optional[str] = None,
     ) -> List[Score]:
-        self._validate_piece(request_piece)
+        self._validate_piece(message_piece)
 
-        expected_intent = self._coerce_to_string(getattr(request_piece, "expected_output", None))
+        expected_intent = self._coerce_to_string(getattr(message_piece, "expected_output", None))
         if not expected_intent:
             self.__class__._summary_data["missing_expected"] += 1
             raise ValueError("IntentClassifierScorer requires expected_output to contain the intent string.")
 
-        actual_intent = self._extract_actual_intent(getattr(request_piece, "converted_value", None))
+        actual_intent = self._extract_actual_intent(getattr(message_piece, "converted_value", None))
 
         self.__class__._summary_data["total"] += 1
 
@@ -73,12 +73,15 @@ class IntentClassifierScorer(Scorer):
                 self.__class__._summary_data["mismatched"] += 1
                 rationale = f"Expected intent '{expected_intent}', but assistant returned '{actual_intent}'."
 
+        if message_piece.id is None:
+            raise ValueError("MessagePiece must have a non-null id to create a Score.")
+        
         score = Score(
             score_value=str(1.0 if matched else 0.0),
             score_category=["intent_classification"],
             score_rationale=rationale,
             score_type=self.scorer_type,
-            prompt_request_response_id=request_piece.id,
+            message_piece_id=message_piece.id,
             score_metadata={
                 "expected_intent": expected_intent,
                 "actual_intent": actual_intent or self.MISSING_INTENT_LABEL,
@@ -89,7 +92,7 @@ class IntentClassifierScorer(Scorer):
             scorer_role=self.scorer_role,
             scorer_class_identifier=self.get_identifier(),
             objective=objective,
-            expected_output=request_piece.expected_output,
+            expected_output=message_piece.expected_output,
         )
 
         return [score]

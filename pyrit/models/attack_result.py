@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Dict, Optional, TypeVar, List
 
 from pyrit.models.conversation_reference import ConversationReference, ConversationType
-from pyrit.models.prompt_request_piece import PromptRequestPiece
+from pyrit.models.message_piece import MessagePiece
 from pyrit.models.score import Score
 from pyrit.models.strategy_result import StrategyResult
 
@@ -45,7 +45,7 @@ class AttackResult(StrategyResult):
 
     # Evidence
     # Model response generated in the final turn of the attack
-    last_response: Optional[PromptRequestPiece] = None
+    last_response: Optional[MessagePiece] = None
 
     # Score assigned to the final response by a scorer component
     last_score: Optional[Score] = None

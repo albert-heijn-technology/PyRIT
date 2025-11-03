@@ -26,8 +26,8 @@ from pyrit.models import (
     AttackOutcome,
     ConversationReference,
     ConversationType,
-    PromptRequestPiece,
-    PromptRequestResponse,
+    Message,
+    MessagePiece,
     Score,
     SeedPrompt,
 )
@@ -137,7 +137,7 @@ class MockNodeFactory:
 class AttackBuilder:
     """Builder for creating TreeOfAttacksWithPruningAttack instances with common configurations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.objective_target: Optional[PromptTarget] = None
         self.adversarial_chat: Optional[PromptChatTarget] = None
         self.objective_scorer: Optional[Scorer] = None
@@ -147,29 +147,29 @@ class AttackBuilder:
         self.successful_threshold: float = 0.8
         self.prompt_normalizer: Optional[PromptNormalizer] = None
 
-    def with_default_mocks(self):
+    def with_default_mocks(self) -> "AttackBuilder":
         """Set up default mocks for all required components."""
         self.objective_target = self._create_mock_target()
         self.adversarial_chat = self._create_mock_chat()
         self.objective_scorer = self._create_mock_scorer("MockScorer")
         return self
 
-    def with_tree_params(self, **kwargs):
+    def with_tree_params(self, **kwargs) -> "AttackBuilder":
         """Set tree parameters (width, depth, branching_factor, batch_size)."""
         self.tree_params = kwargs
         return self
 
-    def with_threshold(self, threshold: float):
+    def with_threshold(self, threshold: float) -> "AttackBuilder":
         """Set successful objective threshold."""
         self.successful_threshold = threshold
         return self
 
-    def with_auxiliary_scorers(self, count: int = 1):
+    def with_auxiliary_scorers(self, count: int = 1) -> "AttackBuilder":
         """Add auxiliary scorers."""
         self.auxiliary_scorers = [self._create_mock_aux_scorer(f"MockAuxScorer{i}") for i in range(count)]
         return self
 
-    def with_prompt_normalizer(self):
+    def with_prompt_normalizer(self) -> "AttackBuilder":
         """Add a mock prompt normalizer."""
         normalizer = MagicMock(spec=PromptNormalizer)
         normalizer.send_prompt_async = AsyncMock(return_value=None)
@@ -255,7 +255,7 @@ class TestHelpers:
             score_value_description="Test score",
             score_rationale="Test rationale",
             score_metadata={"test": "metadata"},
-            prompt_request_response_id=str(uuid.uuid4()),
+            message_piece_id=str(uuid.uuid4()),
             scorer_class_identifier={"__type__": "MockScorer", "__module__": "test_module"},
         )
 
@@ -277,7 +277,7 @@ class TestHelpers:
         mock_dataset = MagicMock()
         mock_dataset.prompts = mock_seed_prompts
 
-        with patch("pyrit.models.seed_prompt_dataset.SeedPromptDataset.from_yaml_file", return_value=mock_dataset):
+        with patch("pyrit.models.seed_dataset.SeedDataset.from_yaml_file", return_value=mock_dataset):
             attack._load_adversarial_prompts()
 
 
@@ -554,7 +554,7 @@ class TestExecutionPhase:
         )
 
         with patch.object(attack, "_create_attack_node", return_value=success_node):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         assert result.outcome == AttackOutcome.SUCCESS
@@ -582,7 +582,7 @@ class TestExecutionPhase:
         )
 
         with patch.object(attack, "_create_attack_node", return_value=success_node):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Should succeed after first iteration
@@ -696,7 +696,7 @@ class TestEndToEndExecution:
 
         with patch.object(attack, "_perform_async", return_value=mock_result):
             with patch.object(attack._memory, "get_conversation", return_value=[]):
-                with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+                with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                     with patch.object(attack._memory, "add_attack_results_to_memory", return_value=None):
                         result = await attack.execute_async(objective="Test objective", memory_labels={"test": "label"})
 
@@ -875,9 +875,9 @@ class TestTreeOfAttacksNode:
 
             if target == node._adversarial_chat:
                 # Return JSON response for adversarial chat
-                return PromptRequestResponse(
-                    request_pieces=[
-                        PromptRequestPiece(
+                return Message(
+                    message_pieces=[
+                        MessagePiece(
                             role="assistant",
                             original_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
                             converted_value=json.dumps({"prompt": "test prompt", "improvement": "test"}),
@@ -888,9 +888,9 @@ class TestTreeOfAttacksNode:
                 )
             else:
                 # Return normal response for objective target
-                return PromptRequestResponse(
-                    request_pieces=[
-                        PromptRequestPiece(
+                return Message(
+                    message_pieces=[
+                        MessagePiece(
                             role="assistant",
                             original_value="Target response",
                             converted_value="Target response",
@@ -971,7 +971,7 @@ class TestTreeOfAttacksErrorHandling:
         node_iterator = iter(failing_nodes)
 
         with patch.object(attack, "_create_attack_node", side_effect=lambda **kwargs: next(node_iterator)):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Should return failure when all nodes fail
@@ -1017,7 +1017,7 @@ class TestTreeOfAttacksErrorHandling:
         # Create all nodes at once
         node_iter = iter(nodes)
         with patch.object(attack, "_create_attack_node", side_effect=lambda **kwargs: next(node_iter, nodes[0])):
-            with patch.object(attack._memory, "get_prompt_request_pieces", return_value=[]):
+            with patch.object(attack._memory, "get_message_pieces", return_value=[]):
                 result = await attack._perform_async(context=context)
 
         # Attack should continue despite some nodes failing
