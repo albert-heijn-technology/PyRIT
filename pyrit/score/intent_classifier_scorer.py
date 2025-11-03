@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, List, Optional
 
 import aiohttp
 from pyrit.score import Scorer, ScorerPromptValidator
+from pyrit.models import MessagePiece
 
 
 logger = logging.getLogger(__name__)
