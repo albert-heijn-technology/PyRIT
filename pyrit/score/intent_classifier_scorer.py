@@ -1,9 +1,13 @@
-import ast
+import asyncio
 import json
+import logging
 from typing import Any, ClassVar, Dict, List, Optional
 
-from pyrit.models import MessagePiece, Score
+import aiohttp
 from pyrit.score import Scorer, ScorerPromptValidator
+
+
+logger = logging.getLogger(__name__)
 
 
 class IntentClassifierScorer(Scorer):
@@ -21,9 +25,22 @@ class IntentClassifierScorer(Scorer):
 
     MISSING_INTENT_LABEL = "<missing_intent>"
 
-    def __init__(self, case_sensitive: bool = False, *, validator: Optional[ScorerPromptValidator] = None):
+    def __init__(
+        self,
+        case_sensitive: bool = False,
+        *,
+        intent_service_url: Optional[str] = None,
+        intent_service_headers: Optional[Dict[str, str]] = None,
+        intent_service_timeout: float = 10.0,
+        intent_response_key: str = "actual_intent",
+        validator: Optional[ScorerPromptValidator] = None,
+    ):
         super().__init__(validator=validator or self._default_validator)
         self.case_sensitive = case_sensitive
+        self._intent_service_url = intent_service_url
+        self._intent_service_headers = intent_service_headers or {}
+        self._intent_service_timeout = intent_service_timeout
+        self._intent_response_key = intent_response_key
 
         cls = self.__class__
         cls._summary_printed = False
@@ -87,6 +104,7 @@ class IntentClassifierScorer(Scorer):
                 "actual_intent": actual_intent or self.MISSING_INTENT_LABEL,
                 "case_sensitive": "true" if self.case_sensitive else "false",
                 "matched": "true" if matched else "false",
+                "intent_source": intent_source,
             },
             score_value_description="1.0 indicates the emitted intent matches the expected intent; 0.0 otherwise.",
             scorer_role=self.scorer_role,
@@ -106,31 +124,49 @@ class IntentClassifierScorer(Scorer):
         row = cls._confusion_matrix.setdefault(expected, {})
         row[actual_label] = row.get(actual_label, 0) + 1
 
-    def _extract_actual_intent(self, value: Any) -> Optional[str]:
-        if value is None:
+    async def _resolve_actual_intent(self, request_piece: PromptRequestPiece) -> tuple[Optional[str], str]:
+        if not self._intent_service_url:
+            raise ValueError("IntentClassifierScorer requires intent_service_url to retrieve intents.")
+
+        thread_id: Optional[str] = None
+        if hasattr(request_piece, "prompt_metadata") and isinstance(request_piece.prompt_metadata, dict):
+            raw_thread_id = request_piece.prompt_metadata.get("thread_id")
+            thread_id = self._coerce_to_string(raw_thread_id)
+
+        if not thread_id:
+            logger.warning("IntentClassifierScorer could not find thread_id in prompt metadata.")
+            return None, "remote_missing_thread_id"
+
+        remote_intent = await self._fetch_intent_from_service(thread_id=thread_id)
+        if remote_intent:
+            return remote_intent, "remote"
+
+        return None, "remote_unavailable"
+
+    async def _fetch_intent_from_service(self, *, thread_id: str) -> Optional[str]:
+        url = self._intent_service_url
+        if "{thread_id}" in url:
+            url = url.format(thread_id=thread_id)
+        else:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}threadId={thread_id}"
+
+        timeout = aiohttp.ClientTimeout(total=self._intent_service_timeout)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=self._intent_service_headers) as response:
+                    response.raise_for_status()
+                    payload = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            logger.warning("Intent service call failed for thread_id %s: %s", thread_id, exc)
             return None
-        if isinstance(value, dict):
-            return self._coerce_to_string(value.get("intent") or value.get("Intent"))
-        if not isinstance(value, str):
-            return self._extract_actual_intent(str(value))
 
-        raw = value.strip()
-        if not raw:
+        if not isinstance(payload, dict):
+            logger.warning("Intent service returned non-dict payload for thread_id %s: %s", thread_id, payload)
             return None
 
-        if raw.startswith("{"):
-            payload: Dict[str, Any] = {}
-            try:
-                payload = json.loads(raw)
-            except json.JSONDecodeError:
-                try:
-                    payload = ast.literal_eval(raw)
-                except (ValueError, SyntaxError):
-                    payload = {}
-            if isinstance(payload, dict):
-                return self._extract_actual_intent(payload)
-
-        return self._coerce_to_string(raw)
+        candidate = payload.get(self._intent_response_key) or payload.get("intent")
+        return self._coerce_to_string(candidate)
 
     def _coerce_to_string(self, value: Any) -> Optional[str]:
         if value is None:
