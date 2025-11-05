@@ -24,19 +24,6 @@ def _fail(msg: str) -> int:
     logging.error(msg)
     sys.exit(2)
 
-
-def _resolve_required_setting(arg_value: Optional[str], env_name: str) -> str:
-    """Return a required configuration value preferring CLI arg over env."""
-    if arg_value:
-        os.environ[env_name] = arg_value
-        return arg_value
-
-    val = os.getenv(env_name)
-    if not val:
-        _fail(f"Missing configuration for {env_name}")
-    return val
-
-
 def _resolve_optional_setting(
     arg_value: Optional[str], env_name: str, default: Optional[str] = None
 ) -> Optional[str]:
@@ -177,7 +164,7 @@ def inject_thread_id(raw_http_request: str, thread_id: str, key: str = "threadId
 async def run_async(args: argparse.Namespace) -> int:
     _setup_logging()
 
-    dataset_path_raw = _resolve_required_setting(args.dataset_path, "DATASET_PATH")
+    dataset_path_raw = args.dataset_path
     # Resolve paths with overrides (flag > env > yaml)
     if not dataset_path_raw:
         return _fail("Config must include dataset_path (or override via flags/env)")
@@ -188,10 +175,10 @@ async def run_async(args: argparse.Namespace) -> int:
         return _fail(f"Dataset file not found: {dataset_path}")
 
     # Env requirements for HTTP templating
-    base_url = _resolve_required_setting(args.target_endpoint, "TARGET_ENDPOINT")
-    token = _resolve_required_setting(args.auth_token, "AUTH_TOKEN")
+    base_url = args.target_endpoint
+    token = args.auth_token
 
-    api_key = _resolve_required_setting(args.openai_api_key, "OPENAI_API_KEY")
+    api_key = args.openai_api_key
     chat_endpoint = _resolve_optional_setting(
         args.openai_chat_endpoint, "OPENAI_CHAT_ENDPOINT", "https://api.openai.com/v1"
     )
@@ -212,7 +199,7 @@ async def run_async(args: argparse.Namespace) -> int:
     cfg_dir = cfg_path.parent
     cfg = _load_yaml(cfg_path)
 
-    scorer_str = _resolve_required_setting(args.scorer, "SCORER")
+    scorer_str = args.scorer
     # Parse the JSON string
     try:
         scorer_json = json.loads(scorer_str)
@@ -582,3 +569,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         sys.exit(code)
     else:
         parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
