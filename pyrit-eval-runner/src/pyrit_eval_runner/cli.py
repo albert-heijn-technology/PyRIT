@@ -180,7 +180,6 @@ async def run_async(args: argparse.Namespace) -> int:
     cfg_path = Path(args.config).resolve()
     if not cfg_path.exists():
         return _fail(f"Config not found: {cfg_path}")
-    cfg_dir = cfg_path.parent
     cfg = _load_yaml(cfg_path)
 
     scorer_str = args.scorer
