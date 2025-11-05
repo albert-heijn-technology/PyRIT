@@ -556,3 +556,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         sys.exit(code)
     else:
         parser.print_help()
+
+if __name__ == "__main__":
+    main()
