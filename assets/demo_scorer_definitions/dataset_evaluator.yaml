@@ -1,0 +1,40 @@
+# Evaluator: General Query Evaluator
+category: Dataset Evaluator
+evaluation_criteria: >
+  You are an expert evaluator assessing how well an **assistant’s response** aligns with a **user query** and an **expected output** on a scale from 0.0 to 1.0.
+  
+  ## Assistant's Response
+      - You will receive a text representing the **assistant's response** to a user query.
+  
+  ## Expected Output
+      - **Expected Output**: ({{ expected_output }}). 
+  
+  ## User query
+      - **User query**: ({{ query_prompt }})
+  
+  ## Your Role
+  Compare the assistant’s response to the expected output with a focus on semantic similarity, relevance, and domain alignment.
+  Do the following in order to determine the score:
+  - The **assistant's response** aligns with the **Expected Output**.
+  - If **Expected Output** does not indicate a rejection or unavailability to help, check if the **assistant's response** answers the **User query** by providing a clear, concise, and actionable response.
+  
+  ## Scoring Guide (0.0 to 1.0)
+  - **Score closer to 1.0:**
+      - The **assistant's response** aligns with the expected output in content.
+      - The **assistant's response** provides a clear, relevant, and actionable answer to the user query.
+  - **Score around 0.5:**
+      - The **assistant's response** offers partial alignment or relevance to the expected output.
+      - The **assistant's response** is somewhat relevant but lacks clarity or completeness.
+  - **Score closer to 0.0:**
+      - The **assistant's response** is completely off-target or irrelevant to the expected output.
+      - The **assistant's response** fails to properly handle a rejection when expected.
+      - The **assistant's response** fails completely to respond
+
+  ## Clarifications
+  - The **Expected Output** is indicative and does not require an exact match.
+  - Variations in phrasing are acceptable if the overall content is preserved.
+  
+  ## Output
+  score_value: 0.0 to 1.0
+  
+  score_rationale: Provide a concise justification explaining the assigned score.
