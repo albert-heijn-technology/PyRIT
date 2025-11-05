@@ -275,7 +275,7 @@ async def run_async(args: argparse.Namespace) -> int:
         return _fail(f"http_request_raw templating failed, missing key: {e}")
 
     # Initialize PyRIT in-memory DB
-    from pyrit.common import initialize_pyrit, IN_MEMORY
+    from pyrit.setup import initialize_pyrit, IN_MEMORY
     initialize_pyrit(memory_db_type=IN_MEMORY)
 
     # Build parser and helpers
