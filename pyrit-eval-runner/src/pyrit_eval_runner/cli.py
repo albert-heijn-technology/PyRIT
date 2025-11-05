@@ -82,7 +82,6 @@ def _normalise_evaluator_entry(entry: Any) -> Dict[str, Any]:
 def _collect_evaluator_paths(scorer_raw: Dict[str, Any]) -> List[Dict[str, Any]]:
     main_normalized = _normalise_evaluator_entry(scorer_raw.get('main'))
     print('Normalized main scorer entry:', main_normalized)
-    scorer_raw.get('auxiliary')
     auxiliaries_raw = scorer_raw.get("auxiliary", [])
     if not isinstance(auxiliaries_raw, list):
         raise ValueError("evaluator_paths auxiliary entry must be a list")
@@ -165,7 +164,6 @@ async def run_async(args: argparse.Namespace) -> int:
     _setup_logging()
 
     dataset_path_raw = args.dataset_path
-    # Resolve paths with overrides (flag > env > yaml)
     if not dataset_path_raw:
         return _fail("Config must include dataset_path (or override via flags/env)")
 
@@ -182,16 +180,11 @@ async def run_async(args: argparse.Namespace) -> int:
     chat_endpoint = _resolve_optional_setting(
         args.openai_chat_endpoint, "OPENAI_CHAT_ENDPOINT", "https://api.openai.com/v1"
     )
-    chat_model = _resolve_optional_setting(
-        args.openai_chat_model, "OPENAI_CHAT_MODEL", "gpt-4o-mini"
-    )
 
     if args.openai_api_key or "OPENAI_CHAT_KEY" not in os.environ:
         os.environ["OPENAI_CHAT_KEY"] = api_key
     if chat_endpoint:
         os.environ["OPENAI_CHAT_ENDPOINT"] = chat_endpoint
-    if chat_model:
-        os.environ["OPENAI_CHAT_MODEL"] = chat_model
 
     cfg_path = Path(args.config).resolve()
     if not cfg_path.exists():
@@ -200,7 +193,6 @@ async def run_async(args: argparse.Namespace) -> int:
     cfg = _load_yaml(cfg_path)
 
     scorer_str = args.scorer
-    # Parse the JSON string
     try:
         scorer_json = json.loads(scorer_str)
     except json.JSONDecodeError as e:
@@ -551,11 +543,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--openai-chat-endpoint",
         required=True,
         help="OpenAI chat endpoint (overrides OPENAI_CHAT_ENDPOINT)",
-    )
-    run.add_argument(
-        "--openai-chat-model",
-        required=True,
-        help="OpenAI chat model (overrides OPENAI_CHAT_MODEL)",
     )
 
     return p
