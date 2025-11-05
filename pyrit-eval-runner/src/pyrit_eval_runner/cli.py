@@ -20,7 +20,7 @@ def _setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
-def _fail(msg: str) -> None:
+def _fail(msg: str) -> int:
     logging.error(msg)
     sys.exit(2)
 
@@ -100,7 +100,7 @@ def _collect_evaluator_paths(scorer_raw: Dict[str, Any]) -> List[Dict[str, Any]]
     if not isinstance(auxiliaries_raw, list):
         raise ValueError("evaluator_paths auxiliary entry must be a list")
     auxiliaries_normalized = [_normalise_evaluator_entry(entry) for entry in auxiliaries_raw]
-
+    print('Normalized auxiliary scorer entries:', auxiliaries_normalized)
     return [main_normalized] + auxiliaries_normalized
 
 
@@ -180,12 +180,12 @@ async def run_async(args: argparse.Namespace) -> int:
     dataset_path_raw = _resolve_required_setting(args.dataset_path, "DATASET_PATH")
     # Resolve paths with overrides (flag > env > yaml)
     if not dataset_path_raw:
-        _fail("Config must include dataset_path (or override via flags/env)")
+        return _fail("Config must include dataset_path (or override via flags/env)")
 
     dataset_path = Path(dataset_path_raw)
     print('The resolved dataset path is:', dataset_path)
     if not dataset_path or not dataset_path.exists():
-        _fail(f"Dataset file not found: {dataset_path}")
+        return _fail(f"Dataset file not found: {dataset_path}")
 
     # Env requirements for HTTP templating
     base_url = _resolve_required_setting(args.target_endpoint, "TARGET_ENDPOINT")
@@ -208,7 +208,7 @@ async def run_async(args: argparse.Namespace) -> int:
 
     cfg_path = Path(args.config).resolve()
     if not cfg_path.exists():
-        _fail(f"Config not found: {cfg_path}")
+        return _fail(f"Config not found: {cfg_path}")
     cfg_dir = cfg_path.parent
     cfg = _load_yaml(cfg_path)
 
@@ -223,12 +223,10 @@ async def run_async(args: argparse.Namespace) -> int:
     try:
         evaluator_paths = _collect_evaluator_paths(scorer_json)
     except ValueError as exc:
-        _fail(str(exc))
+        return _fail(str(exc))
 
-    # TODO(FmaDevMode): Continue by also testing if auxiliary scorers are provided correctly.
-    print('Eval paths collected:', evaluator_paths)
     if not evaluator_paths:
-        _fail("Config must include evaluator_paths (or override via env)")
+        return _fail("Config must include evaluator_paths (or override via env)")
 
     evaluator_entries: List[Dict[str, Any]] = []
     seen_evaluators: Dict[Any, str] = {}
@@ -236,30 +234,30 @@ async def run_async(args: argparse.Namespace) -> int:
         raw_path = entry.get("path")
         resolved_path = _resolve_path(cfg_dir, raw_path)
         if not resolved_path or not resolved_path.exists():
-            _fail(f"Evaluator file not found: {resolved_path}")
+            return _fail(f"Evaluator file not found: {resolved_path}")
 
         canonical = resolved_path.resolve()
         suffix = canonical.suffix.lower()
         callable_name = entry.get("callable")
         params = entry.get("params") or {}
         if suffix == ".py" and not callable_name:
-            _fail(
+            return _fail(
                 "Programmatic evaluator entries referencing '.py' files must include a 'callable' name"
             )
         if suffix not in (".yaml", ".yml", ".py"):
-            _fail(
+            return _fail(
                 "Evaluator path must end with .yaml/.yml for LLM scorers or .py for programmatic scorers"
             )
         duplicate_key: Any = (canonical, callable_name) if suffix == ".py" else canonical
         if duplicate_key in seen_evaluators:
-            _fail(
+            return _fail(
                 "Duplicate evaluator paths detected: "
                 f"'{raw_path}' resolves to the same location as "
                 f"'{seen_evaluators[duplicate_key]}'"
             )
 
         if suffix == ".py" and params and not isinstance(params, dict):
-            _fail("Evaluator params must be provided as a mapping")
+            return _fail("Evaluator params must be provided as a mapping")
 
         seen_evaluators[duplicate_key] = str(raw_path)
         evaluator_entries.append(
@@ -287,15 +285,15 @@ async def run_async(args: argparse.Namespace) -> int:
     else:
         report_threshold = 0.8
     if not isinstance(field_defs, list):
-        _fail("Config field_defs must be a list")
+        return _fail("Config field_defs must be a list")
     if not http_raw or not thread_id_pattern:
-        _fail("Config must include http_request_raw and thread_id_pattern")
+        return _fail("Config must include http_request_raw and thread_id_pattern")
 
     # Template the raw HTTP request with endpoint + token; preserve {PROMPT}
     try:
         http_request_templated = str(http_raw).format(base_url=base_url, token=token)
     except KeyError as e:
-        _fail(f"http_request_raw templating failed, missing key: {e}")
+        return _fail(f"http_request_raw templating failed, missing key: {e}")
 
     # Initialize PyRIT in-memory DB
     from pyrit.common import initialize_pyrit, IN_MEMORY
@@ -323,7 +321,7 @@ async def run_async(args: argparse.Namespace) -> int:
 
     scorer_type = os.getenv("PYRIT_SCORER_TYPE", "float_scale").strip().lower()
     if scorer_type not in ("float_scale", "true_false"):
-        _fail("PYRIT_SCORER_TYPE must be 'float_scale' or 'true_false'")
+        return _fail("PYRIT_SCORER_TYPE must be 'float_scale' or 'true_false'")
 
     from pyrit.prompt_target import OpenAIChatTarget
     from pyrit.score import Evaluator, Scorer
@@ -340,24 +338,24 @@ async def run_async(args: argparse.Namespace) -> int:
             module_name = f"_pyrit_eval_runner_dynamic_{len(evaluator_specs)}"
             spec = importlib.util.spec_from_file_location(module_name, entry["resolved_path"])
             if spec is None or spec.loader is None:
-                _fail(f"Failed to load programmatic scorer module: {entry['display_path']}")
+                return _fail(f"Failed to load programmatic scorer module: {entry['display_path']}")
             module = importlib.util.module_from_spec(spec)
             try:
                 spec.loader.exec_module(module)
             except Exception as exc:
-                _fail(f"Error importing programmatic scorer '{entry['display_path']}': {exc}")
+                return _fail(f"Error importing programmatic scorer '{entry['display_path']}': {exc}")
 
             try:
                 factory = getattr(module, entry["callable"])
             except AttributeError:
-                _fail(
+                return _fail(
                     "Programmatic evaluator callable '{callable_name}' not found in '{path}'".format(
                         callable_name=entry["callable"], path=entry["display_path"]
                     )
                 )
 
             if not callable(factory):
-                _fail(
+                return _fail(
                     "Programmatic evaluator callable '{callable_name}' in '{path}' is not callable".format(
                         callable_name=entry["callable"], path=entry["display_path"]
                     )
@@ -367,14 +365,14 @@ async def run_async(args: argparse.Namespace) -> int:
             try:
                 scorer_instance = factory(**params)
             except Exception as exc:
-                _fail(
+                return _fail(
                     "Failed to instantiate programmatic evaluator '{callable_name}' from '{path}': {error}".format(
                         callable_name=entry["callable"], path=entry["display_path"], error=exc
                     )
                 )
 
             if not isinstance(scorer_instance, Scorer):
-                _fail(
+                return _fail(
                     "Programmatic evaluator '{callable_name}' in '{path}' must return an instance of pyrit.score.Scorer".format(
                         callable_name=entry["callable"], path=entry["display_path"]
                     )
@@ -463,7 +461,7 @@ async def run_async(args: argparse.Namespace) -> int:
         )
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         await session.close()
-        _fail(f"Network error/timeout while contacting target: {e}")
+        return _fail(f"Network error/timeout while contacting target: {e}")
     finally:
         await session.close()
 
@@ -543,8 +541,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="Run evaluations", description="Run evaluations")
-    # TODO(FmaDevMode): Remove this --command, only needed temporarily to run locally
-    run.add_argument("--command", required=True, help="Temp, should be removed before merge / deploy. If here, please remove this code")
     run.add_argument("--config", required=True, help="Path to Repo-B YAML config")
     run.add_argument("--scorer", required=True, help="The json object defining the main and auxiliary scorer paths")
     run.add_argument("--dataset-path", required=True, help="Path to the dataset YAML file")
