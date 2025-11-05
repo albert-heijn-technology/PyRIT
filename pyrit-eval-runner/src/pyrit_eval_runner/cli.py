@@ -41,15 +41,6 @@ def _resolve_optional_setting(
     return default
 
 
-def _resolve_path(base_dir: Path, value: Optional[str]) -> Optional[Path]:
-    if value is None:
-        return None
-    p = Path(value)
-    if not p.is_absolute():
-        p = (base_dir / p).resolve()
-    return p
-
-
 def _split_path_list(value: str) -> List[str]:
     return [item.strip() for item in value.split(os.pathsep) if item.strip()]
 
@@ -211,7 +202,7 @@ async def run_async(args: argparse.Namespace) -> int:
     seen_evaluators: Dict[Any, str] = {}
     for entry in evaluator_paths:
         raw_path = entry.get("path")
-        resolved_path = _resolve_path(cfg_dir, raw_path)
+        resolved_path = Path(raw_path)
         if not resolved_path or not resolved_path.exists():
             return _fail(f"Evaluator file not found: {resolved_path}")
 
