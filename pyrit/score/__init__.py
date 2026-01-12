@@ -7,6 +7,7 @@ including harm detection, objective completion, and content classification.
 """
 
 from pyrit.score.conversation_scorer import ConversationScorer, create_conversation_scorer
+from pyrit.score.evaluator import Evaluator
 from pyrit.score.scorer import Scorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
@@ -95,6 +96,7 @@ __all__ = [
     "PromptShieldScorer",
     "QuestionAnswerScorer",
     "Scorer",
+    "Evaluator",
     "ScorerEvaluator",
     "ScorerMetrics",
     "ScorerPromptValidator",

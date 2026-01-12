@@ -3,7 +3,6 @@
 
 from typing import Dict, List
 
-
 def read_txt(file) -> List[Dict[str, str]]:
     """
     Read a TXT file and return its content.

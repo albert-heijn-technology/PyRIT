@@ -6,7 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from typing import Any, Awaitable, Callable, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from openai import (
     AsyncOpenAI,
@@ -91,12 +91,17 @@ class OpenAITarget(PromptChatTarget):
 
         self._set_openai_env_configuration_vars()
 
-        self._model_name: str = default_values.get_required_value(
+        # Normalize legacy endpoints that include deployment + path/query so users of older formats still work.
+        raw_model_name = default_values.get_required_value(
             env_var_name=self.model_name_environment_variable, passed_value=model_name
         )
-        endpoint_value = default_values.get_required_value(
+        raw_endpoint = default_values.get_required_value(
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
+        endpoint_value, normalized_model_name, default_query = self._normalize_endpoint_and_model(
+            raw_endpoint, raw_model_name
+        )
+        self._model_name: str = normalized_model_name
 
         # Initialize parent with endpoint and model_name
         PromptChatTarget.__init__(
@@ -107,8 +112,65 @@ class OpenAITarget(PromptChatTarget):
         self._api_key = default_values.get_required_value(  # type: ignore[assignment]
             env_var_name=self.api_key_environment_variable, passed_value=api_key
         )
+        # Populate default headers for providers that expect subscription keys or bearer auth in headers.
+        if self._api_key:
+            self._headers.setdefault("Api-Key", self._api_key)
+            self._headers.setdefault("Authorization", f"Bearer {self._api_key}")
 
-        self._initialize_openai_client()
+        self._initialize_openai_client(default_query=default_query)
+
+    def _normalize_endpoint_and_model(
+        self, endpoint_value: str, model_name: str
+    ) -> tuple[str, str, Optional[dict]]:
+        """
+        Normalize endpoint/model for both legacy Azure-style URLs and clean base URLs.
+        Returns a cleaned base endpoint, resolved model_name, and optional default_query (api-version).
+        """
+        parsed = urlparse(endpoint_value)
+        path = parsed.path or ""
+        query = parsed.query or ""
+
+        deployment = self._extract_deployment_from_azure_url(endpoint_value)
+        resolved_model = model_name or deployment
+
+        # Capture api-version if provided
+        default_query = None
+        if "api-version=" in query:
+            # Preserve other query params if ever needed in future
+            query_params = dict([param.split("=", 1) for param in query.split("&") if "=" in param])
+            api_version = query_params.get("api-version")
+            if api_version:
+                default_query = {"api-version": api_version}
+
+        base_path = path.rstrip("/")
+
+        # If legacy path already has deployments segment, keep it but swap in resolved_model if needed
+        deploy_match = re.match(r"(.*?/deployments/)([^/]+)", base_path)
+        if deploy_match:
+            prefix = deploy_match.group(1).rstrip("/")
+            dep = deploy_match.group(2)
+            if not resolved_model:
+                resolved_model = dep
+            cleaned_path = f"{prefix}/{resolved_model}"
+        else:
+            cleaned_path = base_path or "/openai"
+            if cleaned_path == "/":
+                cleaned_path = "/openai"
+            if resolved_model:
+                cleaned_path = f"{cleaned_path.rstrip('/')}/deployments/{resolved_model}"
+
+        # Strip trailing chat/completions suffix if present
+        cleaned_path = re.sub(r"\/(chat|responses)?\/?completions\/?$", "", cleaned_path)
+
+        # Rebuild endpoint without chat/completions path
+        rebuilt = parsed._replace(path=cleaned_path or "", query="")
+        normalized_endpoint = urlunparse(rebuilt)
+
+        # Fallback to original endpoint if something went wrong
+        if not normalized_endpoint:
+            normalized_endpoint = endpoint_value
+
+        return normalized_endpoint, resolved_model, default_query
 
     def _extract_deployment_from_azure_url(self, url: str) -> str:
         """
@@ -281,7 +343,7 @@ class OpenAITarget(PromptChatTarget):
                         f"Recommended: {parsed.scheme}://{parsed.netloc}/openai/v1"
                     )
 
-    def _initialize_openai_client(self) -> None:
+    def _initialize_openai_client(self, default_query: Optional[dict] = None) -> None:
         """
         Initialize the OpenAI client using AsyncOpenAI.
 
@@ -330,11 +392,15 @@ class OpenAITarget(PromptChatTarget):
         base_url = self._endpoint
 
         # Pass api_key directly to the SDK - it handles both strings and callables
-        self._async_client = AsyncOpenAI(
-            base_url=base_url,
-            api_key=self._api_key,
+        client_kwargs: dict = {
+            "base_url": base_url,
+            "api_key": self._api_key,
             **httpx_kwargs,
-        )
+        }
+        if default_query:
+            client_kwargs["default_query"] = default_query
+
+        self._async_client = AsyncOpenAI(**client_kwargs)
 
     async def _handle_openai_request(
         self,

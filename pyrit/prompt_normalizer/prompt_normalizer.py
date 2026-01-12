@@ -91,47 +91,68 @@ class PromptNormalizer:
 
         responses = None
 
-        try:
-            responses = await target.send_prompt_async(message=request)
-            self._memory.add_message_to_memory(request=request)
-        except EmptyResponseException:
-            # Empty responses are retried, but we don't want them to stop execution
-            self._memory.add_message_to_memory(request=request)
+        max_retries = 5
+        retry_delay = 4  # seconds
+        start_time = asyncio.get_event_loop().time()
+        for attempt in range(max_retries + 1):
+            try:
+                responses = await target.send_prompt_async(message=request)
+                self._memory.add_message_to_memory(request=request)
+                break  # Exit the loop if the operation is successful
+            except EmptyResponseException:
+                # Empty responses are retried, but we don't want them to stop execution
+                self._memory.add_message_to_memory(request=request)
 
-            responses = [
-                construct_response_from_request(
+                responses = construct_response_from_request(
                     request=request.message_pieces[0],
-                    response_text_pieces=[""],
-                    response_type="text",
+                    response_text_pieces=["Empty response from target."],
                     error="empty",
                 )
-            ]
+                break  # Exit the loop if the operation is successful
+            except Exception as ex:
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)  # Wait before retrying
+                else:
+                    self._memory.add_message_to_memory(request=request)
 
-        except Exception as ex:
-            # Ensure request to memory before processing exception
-            self._memory.add_message_to_memory(request=request)
+                    # Construct an error response with request
+                    error_response = construct_response_from_request(
+                        request=request.message_pieces[0],
+                        response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()[:1000]}"]
+                    )
 
-            error_response = construct_response_from_request(
-                request=request.message_pieces[0],
-                response_text_pieces=[f"{ex}\n{repr(ex)}\n{traceback.format_exc()}"],
-                response_type="error",
-                error="processing",
-            )
+                    await self._calc_hash(request=error_response)
+                    self._memory.add_message_to_memory(request=error_response)
+                    return error_response
 
-            await self._calc_hash(request=error_response)
-            self._memory.add_message_to_memory(request=error_response)
-            cid = request.message_pieces[0].conversation_id if request and request.message_pieces else None
-            raise Exception(f"Error sending prompt with conversation ID: {cid}") from ex
-
-        # handling empty responses message list and None responses
-        if not responses or not any(responses):
+        if responses is None:
             return None
+
+        # Normalize responses to a list[Message]
+        if isinstance(responses, Message):
+            responses = [responses]
+        elif isinstance(responses, tuple):
+            responses = list(responses)
+        elif not isinstance(responses, list):
+            responses = [responses]
 
         # Process all response messages (targets return list[Message])
         # Only apply response converters to the last message (final response)
         # Intermediate messages are tool calls/outputs that don't need conversion
+        latency_ms = int((asyncio.get_event_loop().time() - start_time) * 1000)
         for i, resp in enumerate(responses):
             is_last = i == len(responses) - 1
+            # Attach latency to prompt metadata so it shows up in reports
+            for piece in resp.message_pieces:
+                meta = piece.prompt_metadata or {}
+                piece.prompt_metadata = dict(meta)
+                piece.prompt_metadata.setdefault("latency_ms", latency_ms)
+                if "latency_first_token_ms" not in piece.prompt_metadata and "latency_ms" in meta:
+                    # If target provided first token latency, preserve it; otherwise fall back when available
+                    if "latency_first_token_ms" in meta:
+                        piece.prompt_metadata["latency_first_token_ms"] = meta["latency_first_token_ms"]
+                if "latency_events_ms" in meta and "latency_events_ms" not in piece.prompt_metadata:
+                    piece.prompt_metadata["latency_events_ms"] = meta["latency_events_ms"]
             if is_last:
                 await self.convert_values(converter_configurations=response_converter_configurations, message=resp)
             await self._calc_hash(request=resp)
@@ -147,7 +168,7 @@ class PromptNormalizer:
         target: PromptTarget,
         labels: Optional[dict[str, str]] = None,
         attack_identifier: Optional[dict[str, str]] = None,
-        batch_size: int = 10,
+        batch_size: int = 1,
     ) -> list[Message]:
         """
         Send a batch of prompts to the target asynchronously.

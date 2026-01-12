@@ -71,7 +71,7 @@ class AttackScoringConfig:
             )
 
         # Enforce objective scorer type: must be a TrueFalseScorer if provided
-        if self.objective_scorer and not isinstance(self.objective_scorer, TrueFalseScorer):
+        if self.objective_scorer and (not isinstance(self.objective_scorer, TrueFalseScorer) and self.objective_scorer.scorer_type != "float_scale"):
             raise ValueError("Objective scorer must be a TrueFalseScorer")
 
         # Enforce refusal scorer type: must be a TrueFalseScorer if provided

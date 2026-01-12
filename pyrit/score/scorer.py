@@ -42,6 +42,7 @@ class Scorer(abc.ABC):
     """
 
     scorer_type: ScoreType
+    scorer_role: str
 
     def __init__(self, *, validator: ScorerPromptValidator):
         """
@@ -106,6 +107,19 @@ class Scorer(abc.ABC):
             RuntimeError: If scoring raises a non-PyRIT exception (wrapped with scorer context).
         """
         self._validator.validate(message, objective=objective)
+
+        for piece in message.message_pieces:
+            val = getattr(piece, "converted_value", "") or ""
+            preview = (val[:200] + "...") if len(val) > 200 else val
+            logger.info(
+                "[Scorer debug] role=%s type=%s len=%s id=%s objective=%s text=%s",
+                getattr(piece, "role", None),
+                getattr(piece, "converted_value_data_type", None),
+                len(val),
+                getattr(piece, "id", None),
+                objective,
+                preview,
+            )
 
         if role_filter is not None and message.role != role_filter:
             logger.debug("Skipping scoring due to role filter mismatch.")
@@ -239,6 +253,7 @@ class Scorer(abc.ABC):
                 MessagePiece(
                     role="user",
                     original_value=text,
+                    expected_output=text
                 )
             ]
         )
@@ -421,6 +436,9 @@ class Scorer(abc.ABC):
         metadata_output_key: str = "metadata",
         category_output_key: str = "category",
         attack_identifier: Optional[Dict[str, str]] = None,
+        expected_output: str = '',
+        request_prompt: Optional[str] = None,
+        additional_evaluator_variables: Optional[dict[str, str]] = None,
     ) -> UnvalidatedScore:
         """
         Send a request to a target, and take care of retries.
@@ -465,6 +483,19 @@ class Scorer(abc.ABC):
         if attack_identifier:
             attack_identifier["scored_prompt_id"] = str(scored_prompt_id)
 
+        # This is the user prompt sent to the target and mainly used for checking relevance
+        if request_prompt is not None:
+            system_prompt = system_prompt.replace("{{ request_prompt }}", request_prompt)
+
+        # This is the expected output that the target should generate
+        if expected_output is not None:
+            system_prompt = system_prompt.replace("{{ expected_output }}", expected_output)
+
+        # This is the additional evaluation variables that can be used in the system prompt of the scorer
+        for key, value in (additional_evaluator_variables or {}).items():
+            placeholder = f"{{{{ {key} }}}}"
+            system_prompt = system_prompt.replace(placeholder, value)
+
         prompt_target.set_system_prompt(
             system_prompt=system_prompt,
             conversation_id=conversation_id,
@@ -476,6 +507,7 @@ class Scorer(abc.ABC):
                 MessagePiece(
                     role="user",
                     original_value=message_value,
+                    expected_output=expected_output,
                     original_value_data_type=message_data_type,
                     converted_value_data_type=message_data_type,
                     conversation_id=conversation_id,
@@ -540,6 +572,8 @@ class Scorer(abc.ABC):
                 score_metadata=normalized_md,
                 message_piece_id=scored_prompt_id,
                 objective=objective,
+                expected_output=expected_output,
+                scorer_role=self.scorer_role,
             )
 
         except json.JSONDecodeError:
@@ -628,12 +662,17 @@ class Scorer(abc.ABC):
                 result["auxiliary_scores"] = aux_scores
             # objective_scores remains empty
             return result
+        has_auxiliary = bool(auxiliary_scorers)
 
-        # Run auxiliary and objective scoring in parallel if auxiliary_scorers is provided
-        if auxiliary_scorers:
-            aux_task = Scorer.score_response_multiple_scorers_async(
+        if has_auxiliary:
+            for scorer in auxiliary_scorers or []:
+                scorer.scorer_role = "auxiliary"
+        objective_scorer.scorer_role = "objective"
+
+        if has_auxiliary:
+            auxiliary_coro = Scorer.score_response_multiple_scorers_async(
                 response=response,
-                scorers=auxiliary_scorers,
+                scorers=auxiliary_scorers or [],
                 role_filter=role_filter,
                 objective=objective,
                 skip_on_error_result=skip_on_error_result,
@@ -644,7 +683,7 @@ class Scorer(abc.ABC):
                 skip_on_error_result=skip_on_error_result,
                 role_filter=role_filter,
             )
-            aux_scores, obj_scores = await asyncio.gather(aux_task, obj_task)
+            aux_scores, obj_scores = await asyncio.gather(auxiliary_coro, obj_task)
             result["auxiliary_scores"] = aux_scores
             result["objective_scores"] = obj_scores
         else:

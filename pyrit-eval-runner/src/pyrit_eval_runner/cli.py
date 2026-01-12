@@ -1,0 +1,472 @@
+import argparse
+import asyncio
+import importlib.util
+import inspect
+import json
+import logging
+import os
+import re
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Mapping
+import aiohttp
+import yaml
+
+from pyrit_eval_runner.cli_utils import (
+    _collect_evaluator_paths,
+    _fail,
+    _invoke_completion_hook,
+    _json_default,
+    _load_yaml,
+    _resolve_optional_setting,
+    _resolve_required_setting,
+    _setup_logging,
+    build_thread_id_parser,
+    inject_thread_id,
+)
+
+
+def _parse_report_metadata(raw_metadata: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not raw_metadata:
+        return None
+    try:
+        parsed = json.loads(raw_metadata)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON for --report-metadata: {exc}")
+    if not isinstance(parsed, dict):
+        raise ValueError("--report-metadata must be a JSON object")
+    return parsed
+
+
+async def run_async(args: argparse.Namespace) -> int:
+    _setup_logging()
+
+    dataset_path_raw = args.dataset_path
+    if not dataset_path_raw:
+        return _fail("Config must include dataset_path (or override via flags/env)")
+
+    dataset_path = Path(dataset_path_raw)
+    print('The resolved dataset path is:', dataset_path)
+    if not dataset_path or not dataset_path.exists():
+        return _fail(f"Dataset file not found: {dataset_path}")
+
+    # Env requirements for HTTP templating
+    base_url = args.target_endpoint
+    token = args.auth_token
+
+    api_key = args.openai_api_key
+    chat_endpoint = _resolve_optional_setting(
+        args.openai_chat_endpoint, "OPENAI_CHAT_ENDPOINT", "https://api.openai.com/v1"
+    )
+    chat_model = _resolve_optional_setting(args.openai_chat_model, "OPENAI_CHAT_MODEL", None)
+
+    if args.openai_api_key or "OPENAI_CHAT_KEY" not in os.environ:
+        os.environ["OPENAI_CHAT_KEY"] = api_key
+    if chat_endpoint:
+        os.environ["OPENAI_CHAT_ENDPOINT"] = chat_endpoint
+    if chat_model:
+        os.environ["OPENAI_CHAT_MODEL"] = chat_model
+    scorer_temperature: Optional[float] = args.scorer_temperature
+
+    cfg_path = Path(args.config).resolve()
+    if not cfg_path.exists():
+        return _fail(f"Config not found: {cfg_path}")
+    cfg = _load_yaml(cfg_path)
+
+    scorer_str = args.scorer
+    try:
+        scorer_json = json.loads(scorer_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON for --scorer: {e}")
+
+    try:
+        report_metadata = _parse_report_metadata(args.report_metadata)
+    except ValueError as exc:
+        return _fail(str(exc))
+
+
+    try:
+        evaluator_paths = _collect_evaluator_paths(scorer_json)
+    except ValueError as exc:
+        return _fail(str(exc))
+
+    if not evaluator_paths:
+        return _fail("Config must include evaluator_paths (or override via env)")
+
+    evaluator_entries: List[Dict[str, Any]] = []
+    seen_evaluators: Dict[Any, str] = {}
+    for entry in evaluator_paths:
+        raw_path = entry.get("path")
+        resolved_path = Path(raw_path)
+        if not resolved_path or not resolved_path.exists():
+            return _fail(f"Evaluator file not found: {resolved_path}")
+
+        canonical = resolved_path.resolve()
+        suffix = canonical.suffix.lower()
+        callable_name = entry.get("callable")
+        params = entry.get("params") or {}
+        if suffix == ".py" and not callable_name:
+            return _fail(
+                "Programmatic evaluator entries referencing '.py' files must include a 'callable' name"
+            )
+        if suffix not in (".yaml", ".yml", ".py"):
+            return _fail(
+                "Evaluator path must end with .yaml/.yml for LLM scorers or .py for programmatic scorers"
+            )
+        duplicate_key: Any = (canonical, callable_name) if suffix == ".py" else canonical
+        if duplicate_key in seen_evaluators:
+            return _fail(
+                "Duplicate evaluator paths detected: "
+                f"'{raw_path}' resolves to the same location as "
+                f"'{seen_evaluators[duplicate_key]}'"
+            )
+
+        if suffix == ".py" and params and not isinstance(params, dict):
+            return _fail("Evaluator params must be provided as a mapping")
+
+        seen_evaluators[duplicate_key] = str(raw_path)
+        evaluator_entries.append(
+            {
+                "resolved_path": resolved_path,
+                "display_path": str(raw_path),
+                "weight": entry.get("weight"),
+                "required": bool(entry.get("required", False)),
+                "callable": callable_name,
+                "params": params if isinstance(params, dict) else {},
+                "kind": "programmatic" if suffix == ".py" else "llm",
+            }
+        )
+
+    http_raw = cfg.get("http_request_raw")
+    field_defs = cfg.get("field_defs")
+    thread_id_pattern = cfg.get("thread_id_pattern")
+    thread_id_key = cfg.get("thread_id_query_param_key", "threadId")
+
+    env_report_threshold = os.getenv("PYRIT_REPORT_THRESHOLD")
+    if env_report_threshold is not None:
+        report_threshold = float(env_report_threshold)
+    elif "report_threshold" in cfg:
+        report_threshold = float(cfg["report_threshold"])
+    else:
+        report_threshold = 0.8
+    if not isinstance(field_defs, list):
+        return _fail("Config field_defs must be a list")
+    if not http_raw:
+        return _fail("Config must include http_request_raw")
+
+    # Template the raw HTTP request with endpoint + token; preserve {PROMPT}
+    try:
+        http_request_templated = str(http_raw).format(base_url=base_url, token=token)
+    except KeyError as e:
+        return _fail(f"http_request_raw templating failed, missing key: {e}")
+
+    # Initialize PyRIT in-memory DB
+    from pyrit_eval_runner.pyrit_init import ensure_pyrit_initialized_async
+    from pyrit.prompt_target import HTTPTargetX
+    await ensure_pyrit_initialized_async()
+
+    # Build parser and helpers
+    from pyrit.prompt_target import MultiFieldResponseParser
+
+    multi_parser = MultiFieldResponseParser(field_definitions=field_defs)
+    tid_parser = build_thread_id_parser(thread_id_pattern)
+
+    # Networking client
+    timeout = aiohttp.ClientTimeout(connect=60, sock_connect=60, sock_read=300)
+    session = aiohttp.ClientSession(timeout=timeout)
+
+    # Targets and scorer
+    http_target = HTTPTargetX(
+        http_request=http_request_templated,
+        prompt_regex_string="{PROMPT}",
+        use_tls=True,
+        response_parser=multi_parser,
+        thread_id_parser=tid_parser,
+        client=session,
+    )
+
+    scorer_type = os.getenv("PYRIT_SCORER_TYPE", "float_scale").strip().lower()
+    if scorer_type not in ("float_scale", "true_false"):
+        return _fail("PYRIT_SCORER_TYPE must be 'float_scale' or 'true_false'")
+
+    from pyrit.prompt_target import OpenAIChatTarget
+    from pyrit.score import Evaluator, Scorer
+
+    evaluator_specs: List[Dict[str, Any]] = []
+    for entry in evaluator_entries:
+        if entry["kind"] == "llm":
+            scorer_instance: Scorer = Evaluator(
+                chat_target=OpenAIChatTarget(
+                    temperature=scorer_temperature,
+                    model_name=chat_model,
+                ),
+                evaluator_yaml_path=entry["resolved_path"],
+                scorer_type=scorer_type,  # type: ignore[arg-type]
+            )
+        else:
+            module_name = f"_pyrit_eval_runner_dynamic_{len(evaluator_specs)}"
+            spec = importlib.util.spec_from_file_location(module_name, entry["resolved_path"])
+            if spec is None or spec.loader is None:
+                return _fail(f"Failed to load programmatic scorer module: {entry['display_path']}")
+            module = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(module)
+            except Exception as exc:
+                return _fail(f"Error importing programmatic scorer '{entry['display_path']}': {exc}")
+
+            try:
+                factory = getattr(module, entry["callable"])
+            except AttributeError:
+                return _fail(
+                    "Programmatic evaluator callable '{callable_name}' not found in '{path}'".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+            if not callable(factory):
+                return _fail(
+                    "Programmatic evaluator callable '{callable_name}' in '{path}' is not callable".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+            params = entry.get("params") or {}
+            try:
+                scorer_instance = factory(**params)
+            except Exception as exc:
+                return _fail(
+                    "Failed to instantiate programmatic evaluator '{callable_name}' from '{path}': {error}".format(
+                        callable_name=entry["callable"], path=entry["display_path"], error=exc
+                    )
+                )
+
+            if not isinstance(scorer_instance, Scorer):
+                return _fail(
+                    "Programmatic evaluator '{callable_name}' in '{path}' must return an instance of pyrit.score.Scorer".format(
+                        callable_name=entry["callable"], path=entry["display_path"]
+                    )
+                )
+
+        original_get_identifier = scorer_instance.get_identifier
+
+        def _identifier_with_path(self, _orig=original_get_identifier, _path=entry["display_path"]):
+            identifier = _orig()
+            identifier["config_path"] = _path
+            return identifier
+
+        scorer_instance.get_identifier = _identifier_with_path.__get__(
+            scorer_instance, scorer_instance.__class__
+        )  # type: ignore[attr-defined]
+
+        if entry.get("weight") is not None:
+            setattr(scorer_instance, "_report_weight", float(entry["weight"]))
+
+        evaluator_specs.append({**entry, "instance": scorer_instance})
+
+    objective_evaluator = evaluator_specs[0]["instance"]
+    auxiliary_evaluators = [spec["instance"] for spec in evaluator_specs[1:]]
+
+    from pyrit.executor.attack import (
+        PromptSendingAttack,
+        AttackConverterConfig,
+        AttackScoringConfig,
+    )
+
+    attack = PromptSendingAttack(
+        objective_target=http_target,
+        attack_converter_config=AttackConverterConfig(request_converters=[], response_converters=[]),
+        attack_scoring_config=AttackScoringConfig(
+            objective_scorer=objective_evaluator,
+            auxiliary_scorers=auxiliary_evaluators,
+        ),
+        max_attempts_on_failure=0,
+    )
+
+    scorer_weight_map: Dict[str, float] = {}
+    scorer_required_map: Dict[str, bool] = {}
+    for spec in evaluator_specs:
+        identifier_json = json.dumps(spec["instance"].get_identifier(), sort_keys=True)
+        if spec.get("weight") is not None:
+            scorer_weight_map[identifier_json] = float(spec["weight"])
+        if spec.get("required") is not None:
+            scorer_required_map[identifier_json] = bool(spec["required"])
+
+    # Load dataset (compatible with Repo A's loader semantics)
+    def _load_test_data(file_path: Path) -> List[Dict[str, Any]]:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not isinstance(data, list):
+            raise ValueError("Dataset YAML should be a list of entries")
+        qa_pairs_local: List[Dict[str, Any]] = []
+        for entry in data:
+            test_case_id = entry.get("test_case_id")
+
+            if "conversation" in entry:
+                qa_entry = dict(entry)
+                if test_case_id is not None:
+                    qa_entry["test_case_id"] = test_case_id
+                qa_pairs_local.append(qa_entry)
+            elif "question" in entry and ("expected_outcome" in entry or "expected_outcomes" in entry):
+                qa_entry = {
+                    "question": entry["question"],
+                    "expected_outcome": entry.get("expected_outcome", entry.get("expected_outcomes")),
+                }
+                if test_case_id is not None:
+                    qa_entry["test_case_id"] = test_case_id
+                qa_pairs_local.append(qa_entry)
+            else:
+                raise ValueError(f"Unknown test case format in entry: {entry}")
+        return qa_pairs_local
+    qa_pairs = _load_test_data(dataset_path)
+
+    # No sharding/max-examples: run all dataset examples
+
+    # Execute
+    start = time.time()
+    try:
+        results = await attack.perform_dataset_attack(
+            qa_pairs,
+            thread_id_injector=lambda r, tid: inject_thread_id(r, tid, thread_id_key),
+        )
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        await session.close()
+        return _fail(f"Network error/timeout while contacting target: {e}")
+    finally:
+        await session.close()
+
+    # Collect conversation reports
+    from pyrit.common import get_conversation_report_async, create_report
+    chat_reports: List[Dict[str, Any]] = []
+    for ar in results:
+        rep = await get_conversation_report_async(ar)
+        chat_reports.append(rep)
+    elapsed = time.time() - start
+
+    out_dir = Path(args.out).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # HTML report (timestamped inside helper)
+    create_report(
+        results=chat_reports,
+        threshold=report_threshold,
+        execution_time=elapsed,
+        description=(
+            "Evaluation of dataset examples. Final conversation score is the minimum weighted step score across the transcript."
+        ),
+        save_path=out_dir / "dataset_report.html",
+        scorer_weights=scorer_weight_map,
+        scorer_required=scorer_required_map,
+        report_metadata=report_metadata,
+    )
+
+    json_report_path = out_dir / "dataset_report.json"
+    report_payload = {
+        "report_threshold": report_threshold,
+        "execution_time_seconds": elapsed,
+        "dataset_path": str(dataset_path) if dataset_path else None,
+        "output_directory": str(out_dir),
+        "report_html": str(out_dir / "dataset_report.html"),
+        "scorer_weights": scorer_weight_map,
+        "scorer_required": scorer_required_map,
+        "raw_result_count": len(results),
+        "evaluators": [
+            {
+                "identifier": spec["instance"].get_identifier(),
+                "display_path": spec.get("display_path"),
+                "weight": spec.get("weight"),
+                "required": spec.get("required"),
+            }
+            for spec in evaluator_specs
+        ],
+        "chat_reports": chat_reports,
+    }
+    if report_metadata is not None:
+        report_payload["report_metadata"] = report_metadata
+
+    serialized_report = json.dumps(report_payload, default=_json_default, indent=2)
+    json_report_path.write_text(serialized_report, encoding="utf-8")
+    normalized_report_payload = json.loads(serialized_report)
+
+    for spec in evaluator_specs:
+        completion_hook = getattr(spec["instance"], "on_run_complete", None)
+        if callable(completion_hook):
+            try:
+                await _invoke_completion_hook(
+                    completion_hook,
+                    report_payload=normalized_report_payload,
+                    report_path=json_report_path,
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging only
+                logging.error(
+                    "Error running on_run_complete for evaluator '%s': %s",
+                    spec.get("display_path", spec["instance"].__class__.__name__),
+                    exc,
+                )
+
+    # Only print the reports directory; no gating/exit failure
+    print(f"Reports: {out_dir}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="pyrit-eval", description="Run PyRIT evaluations from a YAML config")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    run = sub.add_parser("run", help="Run evaluations", description="Run evaluations")
+    run.add_argument("--config", required=True, help="Path to Repo-B YAML config")
+    run.add_argument("--scorer", required=True, help="The json object defining the main and auxiliary scorer paths")
+    run.add_argument("--dataset-path", required=True, help="Path to the dataset YAML file")
+    run.add_argument("--out", required=True, default="pyrit_reports", help="Output directory")
+    run.add_argument(
+        "--report-metadata",
+        required=False,
+        help="Optional JSON object to display under the report title",
+    )
+    run.add_argument(
+        "--target-endpoint",
+        required=True,
+        help="API base URL (overrides TARGET_ENDPOINT)",
+    )
+    run.add_argument(
+        "--auth-token",
+        required=True,
+        help="Authentication token (overrides AUTH_TOKEN)",
+    )
+    run.add_argument(
+        "--openai-api-key",
+        required=True,
+        help="OpenAI API key (overrides OPENAI_API_KEY)",
+    )
+    run.add_argument(
+        "--openai-chat-endpoint",
+        required=True,
+        help="OpenAI chat endpoint (overrides OPENAI_CHAT_ENDPOINT)",
+    )
+    run.add_argument(
+        "--openai-chat-model",
+        required=False,
+        help="OpenAI chat model/deployment (overrides OPENAI_CHAT_MODEL)",
+    )
+    run.add_argument(
+        "--scorer-temperature",
+        required=False,
+        type=float,
+        help="Temperature to use for LLM-based scorers (passed to OpenAIChatTarget); defaults to model default",
+    )
+
+    return p
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        code = asyncio.run(run_async(args))
+        sys.exit(code)
+    else:
+        parser.print_help()
+
+if __name__ == "__main__":
+    main()

@@ -50,7 +50,7 @@ flowchart LR
   end
  subgraph ScoreEntries["ScoreEntries"]
         Sc_id["id (UUID)"]
-        Sc_prompt_request_response_id["prompt_request_response_id (VARCHAR)"]
+        Sc_message_response_id["message_response_id (VARCHAR)"]
         Sc_score_value["score_value (VARCHAR)"]
         Sc_score_value_description["score_value_description (VARCHAR)"]
         Sc_score_type["score_type (VARCHAR)"]
@@ -62,12 +62,12 @@ flowchart LR
         Sc_task["task (VARCHAR)"]
   end
     S_value_sha256 -- N:N relationship to query --> P_original_value_sha256
-    P_id -- 1:N relationship to query --> Sc_prompt_request_response_id
+    P_id -- 1:N relationship to query --> Sc_message_response_id
 
     style S_value_sha256 fill:#ff8800ff
     style P_id fill:#14a519ff
     style P_original_value_sha256 fill:#ff8800ff
-    style Sc_prompt_request_response_id fill:#14a519ff
+    style Sc_message_response_id fill:#14a519ff
     linkStyle 0 stroke:#ff8800ff,fill:none
     linkStyle 1 stroke:#14a519ff
 ```

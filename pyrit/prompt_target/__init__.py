@@ -7,16 +7,17 @@ from pyrit.prompt_target.common.utils import limit_requests_per_minute
 from pyrit.prompt_target.openai.openai_target import OpenAITarget
 from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
 
-
 from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
 from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
 from pyrit.prompt_target.crucible_target import CrucibleTarget
 from pyrit.prompt_target.gandalf_target import GandalfLevel, GandalfTarget
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
+from pyrit.prompt_target.http_target.http_target_x import HTTPTargetX
 from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
+    get_http_regex_stream_callback_function, MultiFieldResponseParser
 )
 from pyrit.prompt_target.hugging_face.hugging_face_chat_target import HuggingFaceChatTarget
 from pyrit.prompt_target.hugging_face.hugging_face_endpoint_target import HuggingFaceEndpointTarget
@@ -40,7 +41,10 @@ __all__ = [
     "GandalfTarget",
     "get_http_target_json_response_callback_function",
     "get_http_target_regex_matching_callback_function",
+    "get_http_regex_stream_callback_function",
+    "MultiFieldResponseParser",
     "HTTPTarget",
+    "HTTPTargetX",
     "HTTPXAPITarget",
     "HuggingFaceChatTarget",
     "HuggingFaceEndpointTarget",

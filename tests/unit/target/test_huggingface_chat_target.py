@@ -207,7 +207,7 @@ async def test_missing_chat_template_error():
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
 @pytest.mark.asyncio
-async def test_invalid_prompt_request_validation():
+async def test_invalid_message_validation():
     hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
     # Await the background task to prevent warnings
     await hf_chat.load_model_and_tokenizer_task
