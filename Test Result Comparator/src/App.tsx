@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DetailView from './components/DetailView';
+import FieldConfigPanel, { FieldOption } from './components/FieldConfigPanel';
 import OverviewTable, { FilterState } from './components/OverviewTable';
 import RunLoader from './components/RunLoader';
 import Toast from './components/Toast';
@@ -26,6 +27,9 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [selectedTestId, setSelectedTestId] = useState<string | null>(null);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [fieldSelection, setFieldSelection] = useState<string[]>([]);
+  const fieldSelectionInitialized = React.useRef(false);
+  const prevFieldKeys = React.useRef<string[]>([]);
 
   useEffect(() => {
     if (!toast) {
@@ -50,6 +54,8 @@ export default function App() {
   const compareRun = runs.find((run) => run.runId === compareRunId) ?? null;
 
   const rows = useMemo(() => buildComparisonRows(baselineRun, compareRun), [baselineRun, compareRun]);
+  const fieldOptions = useMemo(() => buildFieldOptions(baselineRun), [baselineRun]);
+  const fieldOptionsKeys = useMemo(() => fieldOptions.map((option) => option.key), [fieldOptions]);
 
   const thresholdMax = useMemo(() => {
     const scores: number[] = [];
@@ -80,6 +86,34 @@ export default function App() {
   }, [thresholdMax]);
 
   const filteredRows = useMemo(() => filterRows(rows, filters), [rows, filters]);
+  const selectedFields = useMemo(() => {
+    const selectedSet = new Set(fieldSelection);
+    return fieldOptions.filter((option) => selectedSet.has(option.key));
+  }, [fieldOptions, fieldSelection]);
+
+  useEffect(() => {
+    if (fieldOptions.length === 0) {
+      return;
+    }
+    const currentKeys = fieldOptionsKeys;
+    const previousKeys = prevFieldKeys.current;
+    setFieldSelection((prev) => {
+      if (!fieldSelectionInitialized.current) {
+        fieldSelectionInitialized.current = true;
+        return currentKeys;
+      }
+      const currentSet = new Set(currentKeys);
+      const prevSet = new Set(previousKeys);
+      const next = prev.filter((key) => currentSet.has(key));
+      for (const key of currentSet) {
+        if (!prevSet.has(key) && !next.includes(key)) {
+          next.push(key);
+        }
+      }
+      return next;
+    });
+    prevFieldKeys.current = currentKeys;
+  }, [fieldOptions, fieldOptionsKeys]);
 
   useEffect(() => {
     if (selectedTestId && !filteredRows.find((row) => row.testId === selectedTestId)) {
@@ -192,6 +226,17 @@ export default function App() {
             onSelectBaseline={setBaselineRunId}
             onSelectCompare={setCompareRunId}
           />
+          <FieldConfigPanel
+            options={fieldOptions}
+            selected={fieldSelection}
+            onToggle={(key) =>
+              setFieldSelection((prev) =>
+                prev.includes(key) ? prev.filter((entry) => entry !== key) : [...prev, key]
+              )
+            }
+            onSelectAll={() => setFieldSelection(fieldOptionsKeys)}
+            onClearAll={() => setFieldSelection([])}
+          />
         </aside>
         <main className="main">
           <OverviewTable
@@ -201,7 +246,7 @@ export default function App() {
             filters={{ ...filters, thresholdMax }}
             onFiltersChange={(updates) => setFilters((prev) => ({ ...prev, ...updates }))}
           />
-          <DetailView baseline={baselineRun} compare={compareRun} testId={selectedTestId} />
+          <DetailView baseline={baselineRun} compare={compareRun} testId={selectedTestId} fieldConfig={selectedFields} />
         </main>
       </div>
     </div>
@@ -257,4 +302,42 @@ function filterRows(rows: ComparisonRow[], filters: FilterState): ComparisonRow[
 
 function findCompareRunId(runs: Run[], baselineRunId: string | null): string | null {
   return runs.find((run) => run.runId !== baselineRunId)?.runId ?? null;
+}
+
+function buildFieldOptions(run: Run | null): FieldOption[] {
+  const core: FieldOption[] = [
+    { key: 'user', label: 'User', source: 'core' },
+    { key: 'text', label: 'Text', source: 'core' },
+    { key: 'latency', label: 'Latency', source: 'core' },
+    { key: 'weightedaverage', label: 'Weighted avg', source: 'core' },
+    { key: 'scores', label: 'Scorers', source: 'core' },
+  ];
+  const coreKeys = new Set(core.map((option) => option.key));
+  const assistantMap = new Map<string, string>();
+
+  if (run) {
+    for (const testCase of run.cases) {
+      for (const turn of testCase.turns) {
+        for (const key of Object.keys(turn.assistantFields)) {
+          const normalized = normalizeFieldKey(key);
+          if (!normalized || normalized === 'text' || coreKeys.has(normalized)) {
+            continue;
+          }
+          if (!assistantMap.has(normalized)) {
+            assistantMap.set(normalized, key);
+          }
+        }
+      }
+    }
+  }
+
+  const assistant = Array.from(assistantMap.entries())
+    .map(([key, label]) => ({ key, label, source: 'assistant' as const }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return [...core, ...assistant];
+}
+
+function normalizeFieldKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }

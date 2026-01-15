@@ -9,6 +9,11 @@ export type ScoreSummary = {
   required: boolean | null;
 };
 
+export type AssistantFieldValue = {
+  raw: string | null;
+  parsed: unknown | null;
+};
+
 export type NormalizedTurn = {
   index: number;
   userText: string;
@@ -18,6 +23,7 @@ export type NormalizedTurn = {
   assistantDataRaw: string | null;
   assistantPillsRaw: string | null;
   streamEnded: boolean | null;
+  assistantFields: Record<string, AssistantFieldValue>;
   latencyMs: number | null;
   latencyFirstTokenMs: number | null;
   latencyEventsMs: Record<string, number> | null;

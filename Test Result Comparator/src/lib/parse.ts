@@ -1,5 +1,5 @@
 import { normalizeText } from './normalize';
-import { NormalizedCase, NormalizedTurn, Run, ScoreSummary } from './types';
+import { AssistantFieldValue, NormalizedCase, NormalizedTurn, Run, ScoreSummary } from './types';
 
 const JSON_MIME = 'application/json';
 
@@ -81,11 +81,13 @@ export function parseAssistantEnvelope(originalValue: string): {
   pillsJson: unknown | null;
   pillsRaw: string | null;
   streamEnded: boolean | null;
+  fields: Record<string, AssistantFieldValue>;
 } {
   const text = extractStringValue(originalValue, 'Text') ?? '';
   const dataRaw = extractStringValue(originalValue, 'Data');
   const pillsRaw = extractStringValue(originalValue, 'Pills');
   const streamLiteral = extractLiteralValue(originalValue, 'StreamEnded');
+  const fields = parseAssistantFields(originalValue);
 
   const { parsed: dataJson, raw: normalizedDataRaw } = parseJsonString(dataRaw);
   const { parsed: pillsJson, raw: normalizedPillsRaw } = parseJsonString(pillsRaw);
@@ -102,6 +104,7 @@ export function parseAssistantEnvelope(originalValue: string): {
     pillsJson,
     pillsRaw: normalizedPillsRaw,
     streamEnded,
+    fields,
   };
 }
 
@@ -132,6 +135,7 @@ function parseTurn(
   let latencyEventsMs: Record<string, number> | null = null;
   let weightedAverage: number | null = null;
   let scores: ScoreSummary[] = [];
+  let assistantFields: Record<string, AssistantFieldValue> = {};
 
   if (assistantPieces.length > 0) {
     const texts: string[] = [];
@@ -152,6 +156,7 @@ function parseTurn(
     assistantDataRaw = envelope.dataRaw;
     assistantPillsRaw = envelope.pillsRaw;
     streamEnded = envelope.streamEnded;
+    assistantFields = envelope.fields;
     latencyMs = asNumber(primaryPiece.latency_ms);
     latencyFirstTokenMs = asNumber(primaryPiece.latency_first_token_ms);
     latencyEventsMs = asRecordNumber(primaryPiece.latency_events_ms);
@@ -180,6 +185,7 @@ function parseTurn(
       assistantDataRaw,
       assistantPillsRaw,
       streamEnded,
+      assistantFields,
       latencyMs,
       latencyFirstTokenMs,
       latencyEventsMs,
@@ -214,6 +220,89 @@ function parseJsonString(raw: string | null): { parsed: unknown | null; raw: str
     return { parsed: JSON.parse(raw), raw };
   } catch {
     return { parsed: null, raw };
+  }
+}
+
+type EnvelopeEntry = {
+  key: string;
+  raw: string | null;
+  isLiteral: boolean;
+};
+
+function parseAssistantFields(originalValue: string): Record<string, AssistantFieldValue> {
+  const fields: Record<string, AssistantFieldValue> = {};
+  const entries = extractEnvelopeEntries(originalValue);
+  for (const entry of entries) {
+    if (!entry.key) {
+      continue;
+    }
+    fields[entry.key] = {
+      raw: entry.raw,
+      parsed: parseFieldValue(entry.raw, entry.isLiteral),
+    };
+  }
+  return fields;
+}
+
+function extractEnvelopeEntries(source: string): EnvelopeEntry[] {
+  const entries: EnvelopeEntry[] = [];
+  let idx = 0;
+  while (idx < source.length) {
+    const char = source[idx];
+    if (char !== '\'' && char !== '"') {
+      idx += 1;
+      continue;
+    }
+    const parsedKey = parseQuotedString(source, idx);
+    if (!parsedKey) {
+      idx += 1;
+      continue;
+    }
+    let cursor = skipWhitespace(source, parsedKey.endIndex);
+    if (source[cursor] !== ':') {
+      idx = parsedKey.endIndex;
+      continue;
+    }
+    cursor = skipWhitespace(source, cursor + 1);
+    if (cursor >= source.length) {
+      entries.push({ key: parsedKey.value, raw: null, isLiteral: true });
+      idx = cursor;
+      continue;
+    }
+    const valueChar = source[cursor];
+    if (valueChar === '\'' || valueChar === '"') {
+      const parsedValue = parseQuotedString(source, cursor);
+      if (parsedValue) {
+        entries.push({ key: parsedKey.value, raw: parsedValue.value, isLiteral: false });
+        idx = parsedValue.endIndex;
+        continue;
+      }
+    }
+    let end = cursor;
+    while (end < source.length && source[end] !== ',' && source[end] !== '}') {
+      end += 1;
+    }
+    const literal = source.slice(cursor, end).trim();
+    entries.push({ key: parsedKey.value, raw: literal || null, isLiteral: true });
+    idx = end;
+  }
+  return entries;
+}
+
+function parseFieldValue(raw: string | null, isLiteral: boolean): unknown | null {
+  if (raw === null) {
+    return null;
+  }
+  if (isLiteral) {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'none' || normalized === 'null') {
+      return null;
+    }
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
 }
 

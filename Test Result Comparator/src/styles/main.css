@@ -309,6 +309,65 @@ body::after {
   font-family: inherit;
 }
 
+.config-panel {
+  margin-top: 20px;
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.config-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.config-help {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.config-button {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.config-section {
+  margin-top: 12px;
+}
+
+.config-section-title {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.config-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.config-option {
+  font-size: 0.9rem;
+}
+
+.config-empty {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 6px 0;
+}
+
 .error-list {
   margin-top: 16px;
   border-top: 1px dashed rgba(0, 0, 0, 0.08);
@@ -585,6 +644,134 @@ body::after {
   background: rgba(244, 247, 251, 0.8);
   border: 1px solid rgba(15, 30, 56, 0.08);
   white-space: pre-wrap;
+  font-family: 'SFMono-Regular', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.field-json {
+  white-space: normal;
+}
+
+.field-details {
+  margin: 0;
+}
+
+.field-summary {
+  cursor: pointer;
+  display: grid;
+  gap: 6px;
+  position: relative;
+  background: rgba(244, 247, 251, 0.95);
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.field-summary::-webkit-details-marker {
+  display: none;
+}
+
+.field-summary::marker {
+  content: '';
+}
+
+.field-details[open] .field-summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  background: rgba(244, 247, 251, 0.75);
+}
+
+.field-details[open] .field-full {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none;
+}
+
+.field-summary-text {
+  white-space: pre-wrap;
+}
+
+.field-summary-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.field-summary-more {
+  font-weight: 600;
+  color: #0f5e49;
+}
+
+.field-details[open] .field-summary-more {
+  display: none;
+}
+
+.field-summary-less {
+  display: none;
+  font-weight: 600;
+  color: #8a4b00;
+}
+
+.field-details[open] .field-summary-less {
+  display: inline;
+}
+
+.field-details:not([open]) .field-summary-less {
+  display: none;
+}
+
+.field-summary:hover {
+  background: rgba(244, 247, 251, 1);
+  border-color: rgba(15, 30, 56, 0.18);
+}
+
+.json-tree-node {
+  display: block;
+}
+
+.json-tree-node > summary,
+.json-tree-leaf {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.json-tree-node summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.json-tree-node summary::-webkit-details-marker {
+  display: none;
+}
+
+.json-tree-key {
+  font-weight: 600;
+}
+
+.json-tree-type {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.json-tree-sep {
+  color: var(--muted);
+}
+
+.json-tree-value {
+  color: var(--ink);
+}
+
+.json-tree-children {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .diff-block {
